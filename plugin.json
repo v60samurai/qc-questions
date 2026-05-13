@@ -1,0 +1,28 @@
+{
+  "name": "qc-questions",
+  "version": "0.1.0",
+  "description": "QC IRT-aligned assessment questions for correctness and difficulty alignment from a .xlsx bulk-upload sheet or a single standalone MCQ. Uses Modified Angoff + discrimination/guessing proxies + blind-solve parallel subagents; emits a colour-coded Corrected sheet with exact edits applied.",
+  "author": {
+    "name": "v60samurai",
+    "url": "https://github.com/v60samurai"
+  },
+  "license": "MIT",
+  "homepage": "https://github.com/v60samurai/qc-questions",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/v60samurai/qc-questions.git"
+  },
+  "keywords": [
+    "claude-code",
+    "claude-code-plugin",
+    "skill",
+    "assessment",
+    "psychometrics",
+    "irt",
+    "item-response-theory",
+    "angoff",
+    "question-bank",
+    "qc",
+    "edtech"
+  ]
+}

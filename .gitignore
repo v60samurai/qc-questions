@@ -1,0 +1,37 @@
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+ENV/
+
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.tox/
+.mypy_cache/
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Local scratch / runtime artefacts
+/tmp/
+*.tmp
+*.bak
+
+# Output xlsx files produced by qc-questions runs (keep examples/ tracked)
+*__qc.xlsx
+!examples/*__qc.expected.xlsx
+
+# Stray claude-mem artefact
+ruvector.db

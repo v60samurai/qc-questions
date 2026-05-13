@@ -1,0 +1,87 @@
+[
+  {
+    "row": 2,
+    "status": "ALIGNED",
+    "correctness_issue": null,
+    "difficulty_issue": null,
+    "edits": [],
+    "confidence": "HIGH"
+  },
+  {
+    "row": 3,
+    "status": "ALIGNED",
+    "correctness_issue": null,
+    "difficulty_issue": null,
+    "edits": [],
+    "confidence": "HIGH"
+  },
+  {
+    "row": 4,
+    "status": "NEEDS_EDITS",
+    "correctness_issue": "Marked option3 but option3 has two grammatical errors ('were decided'). Only option2 is the defensibly-correct SVA construction.",
+    "difficulty_issue": null,
+    "edits": [
+      {
+        "field": "correctOption",
+        "from": "option3",
+        "to": "option2",
+        "why": "fixes correctness"
+      }
+    ],
+    "confidence": "HIGH"
+  },
+  {
+    "row": 5,
+    "status": "NEEDS_EDITS",
+    "correctness_issue": null,
+    "difficulty_issue": "Marked EASY but the prepositional-phrase-between-subject-and-verb trap trips ~30% of MQCs (Angoff ~70%, MEDIUM-band behaviour). Simplify the stem of option2 to drop the trap and return to EASY-band Angoff.",
+    "edits": [
+      {
+        "field": "option2",
+        "from": "<p>The list of pending tasks were reviewed during the morning call.</p>",
+        "to": "The list were reviewed during the morning call.",
+        "why": "removes the intervening prepositional phrase so the SVA error is obvious; Angoff returns to ~85% EASY band"
+      }
+    ],
+    "confidence": "HIGH"
+  },
+  {
+    "row": 6,
+    "status": "ALIGNED",
+    "correctness_issue": null,
+    "difficulty_issue": null,
+    "edits": [],
+    "confidence": "HIGH"
+  },
+  {
+    "row": 7,
+    "status": "NEEDS_EDITS",
+    "correctness_issue": "Two defensibly-correct options: option2 (simple past) and option3 (present perfect, which native speakers accept with 'yesterday' in casual register). Rewrite option3 to break the tie.",
+    "difficulty_issue": null,
+    "edits": [
+      {
+        "field": "option3",
+        "from": "<p>She has completed her work yesterday.</p>",
+        "to": "She has completed her work today.",
+        "why": "switches the time adverb so present-perfect aligns with the verb form; option2 remains the only correct answer for the marked stem"
+      }
+    ],
+    "confidence": "HIGH"
+  },
+  {
+    "row": 8,
+    "status": "NEEDS_EDITS",
+    "correctness_issue": "Construct mismatch \u2014 item tests arithmetic but is tagged subject='Verbal Ability', topics='Grammar and Sentence Correction'. Cannot align via content edits without rewriting the entire question as a grammar item. Escalate to the author.",
+    "difficulty_issue": null,
+    "edits": [],
+    "confidence": "LOW"
+  },
+  {
+    "row": 9,
+    "status": "ALIGNED",
+    "correctness_issue": null,
+    "difficulty_issue": null,
+    "edits": [],
+    "confidence": "HIGH"
+  }
+]

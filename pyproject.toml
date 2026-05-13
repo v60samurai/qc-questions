@@ -1,0 +1,17 @@
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+exclude = [
+    "examples/_build_sample.py",  # tolerant of slightly-long string literals here
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "RUF"]
+ignore = [
+    "E501",   # long lines tolerated; pragmas in docs land above 100 cols
+    "B008",   # function-call default args are fine in argparse plumbing
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
