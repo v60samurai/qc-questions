@@ -122,15 +122,25 @@ def _normalize_field(field):
     return "content" if field == "stem" else field
 
 
-def _format_qc_changes(verdict, applied_edits):
+def _format_qc_changes(verdict, applied_edits, *, effective_confidence=None):
     """Build the human-readable narrative for the qc_changes cell.
 
     Sections are separated by a blank line. `applied_edits` is the subset of
     `verdict["edits"]` that the writer actually wrote into the Corrected sheet
     (immutable-field edits that were dropped do not appear).
+
+    `effective_confidence` lets the writer's auto-LOW guard override the raw
+    verdict confidence — if the guard fired, we want the narrative to say
+    "human review required" instead of the strengthen-distractors fallback.
     """
     if verdict.get("status") != "NEEDS_EDITS":
         return None
+
+    conf = (
+        effective_confidence
+        if effective_confidence is not None
+        else verdict.get("confidence")
+    )
 
     sections = []
     correctness = verdict.get("correctness_issue")
@@ -147,7 +157,7 @@ def _format_qc_changes(verdict, applied_edits):
         )
         sections.append("EDITS APPLIED:\n" + bullets)
     else:
-        if verdict.get("confidence") == "LOW":
+        if conf == "LOW":
             sections.append("EDITS: none auto-applied — human review required")
         else:
             sections.append(
@@ -424,15 +434,35 @@ def cmd_write(args):
                 continue
             record[h] = ws.cell(row=excel_row, column=i).value
 
-        # Write qc_status on the original sheet.
+        # Compute effective confidence (auto-LOW guard): a NEEDS_EDITS verdict
+        # at MED/HIGH with an empty edits array is a subagent regression — the
+        # autonomous-by-default rule (SKILL.md rule 5) requires every
+        # NEEDS_EDITS row to carry a concrete edit unless confidence is LOW
+        # and the obstruction is external. Don't fail the write — surface the
+        # gap with a stderr warning and paint the row RED so reviewers see it.
         status = v.get("status") if v else None
+        effective_conf = v.get("confidence") if v else None
+        if (
+            v is not None
+            and status == "NEEDS_EDITS"
+            and effective_conf != "LOW"
+            and not (v.get("edits") or [])
+        ):
+            sys.stderr.write(
+                f"  ! row {excel_row}: NEEDS_EDITS at confidence {effective_conf} "
+                f"but no edits supplied — subagent should have prescribed an edit. "
+                f"Treating as LOW for fill colour.\n"
+            )
+            effective_conf = "LOW"
+
+        # Write qc_status on the original sheet.
         if status is not None:
             status_cell = ws.cell(row=excel_row, column=qc_status_col, value=status)
             if status == "ALIGNED":
                 status_cell.fill = GREEN_FILL
             elif status == "NEEDS_EDITS":
                 status_cell.fill = (
-                    RED_FILL if v.get("confidence") == "LOW" else AMBER_FILL
+                    RED_FILL if effective_conf == "LOW" else AMBER_FILL
                 )
 
         if v is None or status == "ALIGNED":
@@ -469,7 +499,7 @@ def cmd_write(args):
             changed_fields.add(field)
             applied_edits.append(edit)
 
-        row_fill = RED_FILL if v.get("confidence") == "LOW" else AMBER_FILL
+        row_fill = RED_FILL if effective_conf == "LOW" else AMBER_FILL
 
         for i, h in enumerate(named_headers, start=1):
             cell = cs.cell(row=excel_row, column=i, value=record.get(h))
@@ -480,7 +510,9 @@ def cmd_write(args):
                 cell.fill = row_fill
 
         # qc_changes narrative on the original sheet, fill mirrors qc_status.
-        narrative = _format_qc_changes(v, applied_edits)
+        narrative = _format_qc_changes(
+            v, applied_edits, effective_confidence=effective_conf
+        )
         if narrative is not None:
             changes_cell = ws.cell(
                 row=excel_row, column=qc_changes_col, value=narrative
@@ -509,7 +541,8 @@ def cmd_write(args):
         f"  - '{LEGEND_SHEET_NAME}' sheet: colour-code legend\n"
         f"  - '{CORRECTED_SHEET_NAME}' sheet: ALIGNED rows populated verbatim+green "
         f"(upload-ready), NEEDS_EDITS rows show post-edit content (amber row, "
-        f"dark-amber+bold on changed cells; red row if confidence=LOW)\n"
+        f"dark-amber+bold on changed cells; red row if confidence=LOW or if "
+        f"the auto-LOW guard fired for empty edits at MED/HIGH)\n"
     )
 
 

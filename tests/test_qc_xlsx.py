@@ -399,6 +399,111 @@ def test_allow_retag_flag_applies_immutable_field_edits(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
+# Auto-LOW guard: NEEDS_EDITS at MED/HIGH with empty edits is a regression.
+# The writer warns + bumps the row's fill to RED + emits the human-review
+# narrative, so the gap is visible to reviewers without breaking the pipeline.
+# ---------------------------------------------------------------------------
+
+def _empty_edits_verdict(tmp_path: Path, *, confidence: str) -> Path:
+    v = [
+        {
+            "row": 2,
+            "status": "NEEDS_EDITS",
+            "correctness_issue": "fake correctness issue for guard test",
+            "difficulty_issue": None,
+            "edits": [],
+            "confidence": confidence,
+        }
+    ]
+    p = tmp_path / f"empty_{confidence}.json"
+    p.write_text(json.dumps(v))
+    return p
+
+
+def test_writer_warns_and_reds_empty_edits_at_high(tmp_path: Path):
+    """A NEEDS_EDITS verdict at HIGH confidence with empty edits is a subagent
+    regression. Writer must (1) warn on stderr with the canonical phrasing,
+    (2) bump qc_status + qc_changes + Corrected row fills to RED, (3) emit
+    the 'human review required' narrative."""
+    verdicts = _empty_edits_verdict(tmp_path, confidence="HIGH")
+    out = tmp_path / "out.xlsx"
+    proc = subprocess.run(
+        [sys.executable, str(SCRIPT), "write", str(SAMPLE_XLSX), str(verdicts), str(out)],
+        capture_output=True, text=True, check=True,
+    )
+    assert (
+        "row 2: NEEDS_EDITS at confidence HIGH but no edits supplied"
+        in proc.stderr
+    ), proc.stderr
+    assert "Treating as LOW for fill colour" in proc.stderr
+
+    wb = openpyxl.load_workbook(out)
+    ws = wb["Sheet1"]
+    headers = [c.value for c in ws[1]]
+    qs = headers.index("qc_status") + 1
+    qc = headers.index("qc_changes") + 1
+    assert ws.cell(row=2, column=qs).fill.start_color.rgb == RED
+    qc_cell = ws.cell(row=2, column=qc)
+    assert qc_cell.fill.start_color.rgb == RED
+    assert "human review required" in qc_cell.value
+    # Corrected sheet row should also be RED (not AMBER).
+    cs = wb["Corrected"]
+    assert cs.cell(row=2, column=1).fill.start_color.rgb == RED
+
+
+def test_writer_warns_and_reds_empty_edits_at_med(tmp_path: Path):
+    """Same guard for MED confidence — the rule is MED OR HIGH."""
+    verdicts = _empty_edits_verdict(tmp_path, confidence="MED")
+    out = tmp_path / "out.xlsx"
+    proc = subprocess.run(
+        [sys.executable, str(SCRIPT), "write", str(SAMPLE_XLSX), str(verdicts), str(out)],
+        capture_output=True, text=True, check=True,
+    )
+    assert "NEEDS_EDITS at confidence MED but no edits supplied" in proc.stderr
+
+
+def test_writer_does_not_warn_for_low_with_empty_edits(tmp_path: Path):
+    """LOW + empty edits is the canonical 'external obstruction' path
+    (construct mismatch, missing chart). No warning should fire."""
+    verdicts = _empty_edits_verdict(tmp_path, confidence="LOW")
+    out = tmp_path / "out.xlsx"
+    proc = subprocess.run(
+        [sys.executable, str(SCRIPT), "write", str(SAMPLE_XLSX), str(verdicts), str(out)],
+        capture_output=True, text=True, check=True,
+    )
+    assert "no edits supplied" not in proc.stderr
+
+
+def test_writer_does_not_warn_when_edits_are_present(tmp_path: Path):
+    """A NEEDS_EDITS verdict with a non-empty edits array — no guard fire."""
+    v = [
+        {
+            "row": 2,
+            "status": "NEEDS_EDITS",
+            "correctness_issue": "fake",
+            "difficulty_issue": None,
+            "edits": [
+                {
+                    "field": "option1",
+                    "from": "<p>She don't likes coffee in the morning.</p>",
+                    "to": "She doesn't likes coffee.",
+                    "why": "test edit",
+                }
+            ],
+            "confidence": "HIGH",
+        }
+    ]
+    p = tmp_path / "with_edits.json"
+    p.write_text(json.dumps(v))
+    out = tmp_path / "out.xlsx"
+    proc = subprocess.run(
+        [sys.executable, str(SCRIPT), "write", str(SAMPLE_XLSX), str(p), str(out)],
+        capture_output=True, text=True, check=True,
+    )
+    assert "no edits supplied" not in proc.stderr
+
+
+# ---------------------------------------------------------------------------
 # Legend sheet
 # ---------------------------------------------------------------------------
 
