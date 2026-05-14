@@ -71,13 +71,15 @@ digraph qc_flow {
 2. **Self-consistency for quant/logic.** Solve numerical/logical items by two independent methods. If they disagree, flag P0 — your own answer is unreliable, escalate to human.
 3. **Difficulty is IRT-anchored, not vibes.** Use Modified Angoff for the b-proxy plus discrimination (a-proxy) and pseudo-guessing (c-proxy) scoring per [DIFFICULTY_RUBRIC.md](DIFFICULTY_RUBRIC.md). Never tag "MEDIUM because it feels medium".
 4. **State the MQC.** Difficulty is defined relative to the **minimally-qualified candidate** (MQC) for the assessment — the candidate sitting at the cut score. Write the MQC definition in `qc_notes` for every verdict. If the MQC isn't obvious from `subject`/`topics`, ask once at session start and reuse.
-5. **Edits must be concrete and minimal.** If misaligned, output the exact text to add/remove/swap, not "make it harder". Prescriptions library is in the rubric file, mapped to which IRT proxy each edit moves.
+5. **Edits must be concrete and minimal.** If misaligned, output the exact text to add/remove/swap, not "make it harder". Prescriptions library is in the rubric file, mapped to which IRT proxy each edit moves. **Every NEEDS_EDITS row MUST carry at least one concrete edit in `proposed_edits`. Empty edits are only allowed when `confidence: LOW` AND the obstruction is external to the QC pipeline (missing chart, malformed source cell). Flagging drift for human review is a failure mode — the subagent has full content visibility, so it must write the edit.**
 6. **Ambiguous or low-discrimination = block ship.** Two defensible answers, no defensible answer, contradictory stem, or a-proxy ≤ 2 all become at-least-P1 verdicts even if `correctOption` happens to match yours. Construct-alignment failure is P0.
 7. **`subject`, `topics`, and `difficulty` are the SPEC, not editable fields.** The marked tags define what this question is supposed to be — they are immutable targets. Never propose an edit that changes them. If the item drifts away from its tags, edit the `content` / `option1..option6` / `correctOption` to pull it BACK to the marked subject, topic, and difficulty band. Retagging would silently change the bank composition; the PM planned a specific count per `(subject, topic, difficulty)` cell and the QC must respect that plan. If the item is so far from its tags that it cannot be aligned without a from-scratch rewrite (e.g., a quant problem marked Verbal Ability), flag `confidence: LOW` and the `correctness_issue` becomes "construct mismatch — escalate" — do NOT silently retag.
 
 ## Output — What the User Sees
 
 IRT (Modified Angoff + a-proxy + c-proxy) is the **internal reasoning method**, not the deliverable. The deliverable is:
+
+**Autonomous-by-default.** The Corrected sheet is fully self-applying — every NEEDS_EDITS row at HIGH or MED confidence ships with the prescribed edits already written into the cells. Only LOW-confidence rows are held back un-edited for human review (typically construct mismatch, missing chart, or another external obstruction the QC pipeline genuinely cannot fix). The skill never flags drift for a human reviewer when the subagent had full content visibility — that is treated as a regression, surfaced by the writer with a red fill and a stderr warning.
 
 **For xlsx batch input:** a single output workbook with three sheets.
 1. The **original sheet** is preserved verbatim, with two new audit columns appended:
@@ -211,7 +213,7 @@ Parallel subagent dispatch is **not optional** for batch QC. The main agent's co
 | Not stating the MQC | Difficulty is meaningless without an MQC anchor. State it in every verdict. |
 | Defaulting Angoff to 50% when unsure | A refusal-to-estimate. Pick a side and write your reasoning. |
 | Skipping a-proxy / c-proxy because difficulty was aligned | Low a or high c are independent ship-blockers (P1). Always score all three. |
-| Vague edits like "rephrase for clarity" | Quote the exact span and the replacement; tag which proxy each edit moves. |
+| Flagging drift without a concrete distractor rewrite | The subagent has full content visibility. Write the edit, do not defer to a human. |
 | Marking LOW_CONFIDENCE as OK | LOW_CONFIDENCE is P0 — your QC is the high-stakes gate. |
 | Skipping self-consistency on quant items | Two independent methods is non-negotiable for numerical questions. |
 | Treating HTML tags as content | Strip before reading; preserve math/code/tables. |
