@@ -161,15 +161,29 @@ def test_qc_status_fills_match_severity(written_workbook: Path):
         assert cell.fill.start_color.rgb == fill, f"row {row_no} fill"
 
 
-def test_corrected_aligned_rows_are_blank_and_green(written_workbook: Path):
+def test_corrected_aligned_rows_are_populated_verbatim_and_green(written_workbook: Path):
+    """ALIGNED rows must carry the original content so the Corrected sheet is
+    upload-ready as the single source of truth. The whole row is green-filled."""
+    src = openpyxl.load_workbook(SAMPLE_XLSX)
+    src_ws = src["Sheet1"]
+    src_headers = [c.value for c in src_ws[1]]
     wb = openpyxl.load_workbook(written_workbook)
     cs = wb["Corrected"]
-    headers = [c.value for c in cs[1]]
+    dst_headers = [c.value for c in cs[1]]
     for row_no in (2, 3, 6, 9):
-        for col_no in range(1, len(headers) + 1):
-            cell = cs.cell(row=row_no, column=col_no)
-            assert cell.value is None, f"row {row_no} col {col_no} should be blank"
-            assert cell.fill.start_color.rgb == GREEN
+        for h in dst_headers:
+            src_col = src_headers.index(h) + 1
+            dst_col = dst_headers.index(h) + 1
+            src_val = src_ws.cell(row=row_no, column=src_col).value
+            cell = cs.cell(row=row_no, column=dst_col)
+            assert cell.value == src_val, (
+                f"row {row_no} col {h} should equal source verbatim: "
+                f"{src_val!r} vs {cell.value!r}"
+            )
+            assert cell.fill.start_color.rgb == GREEN, (
+                f"row {row_no} col {h} should be green-filled"
+            )
+            assert cell.font.bold is False
 
 
 def test_corrected_needs_edits_row_has_post_edit_content(written_workbook: Path):
@@ -206,7 +220,11 @@ def test_corrected_low_confidence_row_is_red(written_workbook: Path):
 
 
 def test_immutable_fields_are_preserved_in_corrected_sheet(written_workbook: Path):
-    """`subject`, `topics`, `difficulty` must never be silently changed."""
+    """`subject`, `topics`, `difficulty` must never be silently changed.
+
+    Now that ALIGNED rows are populated verbatim, every row's immutable cells
+    must match the source — no None passthrough.
+    """
     src = openpyxl.load_workbook(SAMPLE_XLSX)
     dst = openpyxl.load_workbook(written_workbook)
     src_ws = src["Sheet1"]
@@ -219,10 +237,6 @@ def test_immutable_fields_are_preserved_in_corrected_sheet(written_workbook: Pat
         for row_no in range(2, 10):
             src_val = src_ws.cell(row=row_no, column=src_col).value
             dst_val = dst_cs.cell(row=row_no, column=dst_col).value
-            # ALIGNED rows are blank in Corrected; NEEDS_EDITS rows must carry
-            # the unchanged marked value.
-            if dst_val is None:
-                continue
             assert dst_val == src_val, (
                 f"immutable {field} changed at row {row_no}: {src_val!r} -> {dst_val!r}"
             )

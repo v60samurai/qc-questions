@@ -358,25 +358,28 @@ def cmd_write(args):
         hcell.font = BOLD_FONT
 
     # 3. Per row:
-    #    - ALIGNED  → leave cells blank, fill the whole row light GREEN.
-    #    - NEEDS_EDITS → write the post-edit content, fill row AMBER
-    #      (or RED if LOW confidence). Cells that were actually edited get
-    #      DARK_AMBER + bold font so the diff pops at a glance.
+    #    - ALIGNED      → copy the original row content verbatim, fill GREEN.
+    #                     The Corrected sheet is the production-ready post-QC
+    #                     output, so a user can drop the fills and re-upload it
+    #                     as-is.
+    #    - NEEDS_EDITS  → write the post-edit content, fill row AMBER (or RED
+    #                     if LOW confidence). Cells that were actually edited
+    #                     get DARK_AMBER + bold font so the diff pops.
     for excel_row in range(2, ws.max_row + 1):
         v = by_row.get(excel_row)
 
-        if v is None or v.get("status") == "ALIGNED":
-            for i, _h in enumerate(named_headers, start=1):
-                cell = cs.cell(row=excel_row, column=i, value=None)
-                cell.fill = GREEN_FILL
-            continue
-
-        # Build the post-edit record from the original row + applied edits.
+        # Start from the original row content for every status.
         record = {}
         for i, h in enumerate(raw_headers, start=1):
             if h is None or h == ORIGINAL_QC_COLUMN:
                 continue
             record[h] = ws.cell(row=excel_row, column=i).value
+
+        if v is None or v.get("status") == "ALIGNED":
+            for i, h in enumerate(named_headers, start=1):
+                cell = cs.cell(row=excel_row, column=i, value=record.get(h))
+                cell.fill = GREEN_FILL
+            continue
 
         allow_retag = bool(getattr(args, "allow_retag", False))
         changed_fields = set()
@@ -430,9 +433,9 @@ def cmd_write(args):
         f"Wrote {out_path}\n"
         f"  - Original '{ws.title}': qc_status appended at column {qc_status_col}\n"
         f"  - '{LEGEND_SHEET_NAME}' sheet: colour-code legend\n"
-        f"  - '{CORRECTED_SHEET_NAME}' sheet: ALIGNED rows blank+green, "
-        f"NEEDS_EDITS rows show post-edit content (amber row, dark-amber+bold "
-        f"on changed cells; red row if confidence=LOW)\n"
+        f"  - '{CORRECTED_SHEET_NAME}' sheet: ALIGNED rows populated verbatim+green "
+        f"(upload-ready), NEEDS_EDITS rows show post-edit content (amber row, "
+        f"dark-amber+bold on changed cells; red row if confidence=LOW)\n"
     )
 
 
