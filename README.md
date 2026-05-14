@@ -8,11 +8,12 @@ Catches the failures that humans miss when reviewing hundreds of items: silently
 
 LLMs are bad at QCing answer keys because once they see `correctOption=option2`, they rationalise option2 as right. This plugin breaks that failure mode structurally: every blind solve happens in a fresh subagent context that has *literally never seen* the marked key. Then the main agent reveals keys, composes verdicts, and writes an edit-centric output.
 
-Three things distinguish this from "just ask Claude to QC my questions":
+Four things distinguish this from "just ask Claude to QC my questions":
 
 1. **Blind-solve protocol via parallel subagents.** Six rows per worker, all batches dispatched concurrently. The subagent context cannot leak the marked answer because it never received it.
 2. **IRT-anchored difficulty estimation, not vibes.** Each item gets a Modified Angoff %-correct estimate (for a minimally-qualified candidate at the cut), a discrimination proxy (`a`), and a pseudo-guessing proxy (`c`). The marked EASY/MEDIUM/HARD band is checked against this estimate.
 3. **The marked tags are the spec, not editable.** `subject`, `topics`, `difficulty` are immutable. If an item drifts, the plugin edits `content` / `options` / `correctOption` to pull it back to the marked tags. Never silently retag.
+4. **Autonomous-by-default — the subagent auto-prescribes distractor rewrites for difficulty drift, multi-correct risks, and ambiguity.** Previously these were flagged for human review and shipped with empty edits arrays; now every NEEDS_EDITS row at HIGH or MED confidence comes back with paste-able edits already written into the Corrected sheet. Only LOW-confidence rows (construct mismatch, missing chart, malformed source) hold back for human attention. The writer emits a stderr warning + RED fill if any row breaks this contract.
 
 ## Install
 

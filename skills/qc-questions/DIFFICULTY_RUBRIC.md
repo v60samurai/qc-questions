@@ -120,6 +120,37 @@ For 5-option or 6-option items, scale proportionally. Flag any item with C-proxy
 
 (Same as before — see prior version: switch `correctOption`, tighten stem qualifier, add precision constraint, etc.)
 
+### Worked-example prescriptions (auto-prescribed by the subagent)
+
+The autonomous-by-default rule (SKILL.md rule 5) requires the subagent to write a concrete edit for every NEEDS_EDITS row at HIGH or MED confidence. Pattern library below — each line gives an item shape, the diagnostic, and a paste-able edit shape. Use these as templates when the matching pattern fires.
+
+**Too-hard item (Angoff below the marked band): soften the weakest distractor by 1 step.**
+- *Diagnostic:* `angoff_pct` below the marked band's window; one distractor is doing the heavy lifting and tripping near-passers.
+- *Edit:* identify the distractor with the highest near-miss density (typically the most plausible wrong answer for MQC), and step its difficulty down by one — e.g., replace a multi-step trap with a single-step trap, or replace a numerical trap that requires an extra computation with one that doesn't.
+- *Example:* HARD-tagged speed/distance item, Angoff 22%. Distractor "55" requires both `total = 240`, `time = 4` AND remembering to divide. Soften to "240" so the trap is "forgot to divide" (one step instead of two) — Angoff lifts to ~30%.
+
+**Too-easy speed/rate item (Angoff above the marked band): add a near-miss distractor that swaps mean-of-means for harmonic mean.**
+- *Diagnostic:* `angoff_pct` above marked band's window on an item involving average speed, average rate, or "round-trip at speeds A and B" — and the distractor set contains no option matching the naive arithmetic-mean answer.
+- *Edit:* compute the arithmetic mean of the two speeds and use it as a distractor. MQCs who reach for `(A+B)/2` instead of `2AB/(A+B)` will land on it — drops Angoff by ~15 pts and lifts a-proxy.
+- *Example:* "A car travels 60 km at 30 km/h and returns at 60 km/h. Average speed?" Correct: 40. If options are `35, 40, 45, 50`, swap one for `45` (= the arithmetic mean of 30 and 60) — Angoff falls from ~80% to ~65%.
+
+**Too-easy arithmetic item (Angoff above marked band): flip sign in one option text.**
+- *Diagnostic:* `angoff_pct` above marked band on a signed-arithmetic, profit/loss, or net-change item. Distractors include no "wrong sign" option, so the answer pops out as the only positive (or only negative).
+- *Edit:* take the correct numeric answer and emit a sign-flipped twin as a distractor. Captures candidates who get the magnitude right but misread the direction.
+- *Example:* "Net profit/loss on the trade." Correct: `+₹240`. Add `−₹240` to the distractor pool, drop the obvious throwaway.
+
+**Ambiguous number-property item: tighten range or add a div-by-3 constraint.**
+- *Diagnostic:* `ambiguity_risk: yes` on an item like "How many two-digit numbers satisfy property P?" where P admits multiple defensible counts depending on whether range endpoints are inclusive, or whether divisibility by 1 / by 3 / etc. is required.
+- *Edit:* tighten the stem with an explicit range (`"between 10 and 99 inclusive"`) and an additional constraint that narrows to a unique count (`"and divisible by 3"`).
+- *Example:* "How many two-digit multiples of 5 are there?" admits 18 (inclusive of both endpoints) or 16 (exclusive). Tighten to "How many positive integers between 10 and 99 inclusive are multiples of 15?" — unique answer 6 (15, 30, 45, 60, 75, 90).
+
+**Over-constrained Constraint Deduction item: loosen one constraint to break the must-true chain.**
+- *Diagnostic:* `multiple_correct_risk: yes` because the puzzle's constraints force EVERY listed option to be true (any of them satisfies the deduction). Common in seating-arrangement, ordering, and logic-grid items.
+- *Edit:* remove or weaken one premise so that exactly one of the listed conclusions remains forced. Test which constraint is "redundant" by checking which can be dropped without changing the unique-answer property of the puzzle.
+- *Example:* "A, B, C, D sit in a row. A is to the left of B. B is to the left of C. C is to the left of D. Which must be true?" — every option (A<B, B<D, A<D, etc.) is forced by the chain. Drop "B is to the left of C" so the puzzle has only `A<B` and `C<D`. Now `A<B` is forced but `A<D` is not — only one option is must-true.
+
+Each of these is paste-able into a `proposed_edits` entry: pick the field, copy the current cell value into `from`, write the new value into `to`, and tag `why` with the diagnostic ("too-hard distractor softened", "added arithmetic-mean trap", etc.).
+
 ## Worked Examples
 
 ### Example 1 — EASY-tagged grammar item
