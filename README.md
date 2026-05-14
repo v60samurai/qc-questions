@@ -67,15 +67,16 @@ Running the skill on `<file>.xlsx` produces `<file>__qc.xlsx` with three sheets:
 
 | Sheet | What it contains |
 |---|---|
-| **Original** (e.g. `Sheet1`) | Your input verbatim + one new column `qc_status` (`ALIGNED` / `NEEDS_EDITS`) placed at the next truly empty column. Colour-coded: green = aligned, amber = needs edits, red = needs edits with LOW confidence (escalate). |
+| **Original** (e.g. `Sheet1`) | Your input verbatim + two new audit columns placed at the next truly empty columns. `qc_status` (`ALIGNED` / `NEEDS_EDITS`) — colour-coded: green = aligned, amber = needs edits, red = needs edits with LOW confidence (escalate). `qc_changes` — wrap-text narrative for every NEEDS_EDITS row: `CORRECTNESS:` section + `DIFFICULTY:` section + `EDITS APPLIED:` bulleted list, blank-line-separated. Fill mirrors `qc_status` (amber or red); cell width ~80 for at-a-glance reading. |
 | **QC Legend** | Small reference sheet documenting the colour code. |
-| **Corrected** | Same headers as Original. **ALIGNED rows are blank with a green fill.** **NEEDS_EDITS rows are fully populated with the post-edit content** (original + edits applied), with an amber row fill and *dark-amber bold* on the specific cells that changed so the diff pops at a glance. LOW-confidence rows are red-filled. |
+| **Corrected** | Same headers as Original (no audit columns). **Production-ready** as the post-QC source of truth — drop the fills and upload as-is. **ALIGNED rows carry the original content verbatim with a green fill.** **NEEDS_EDITS rows show the post-edit content** (original + edits applied), with an amber row fill and *dark-amber bold* on the specific cells that changed so the diff pops at a glance. **LOW-confidence rows are red-filled** with original content un-edited (escalate first). |
 
 ### Visual example
 
-ALIGNED row in Corrected sheet (just the colour, no values):
+ALIGNED row in Corrected sheet (original content, just green-filled):
 ```
-[ green ][ green ][ green ][ green ]   ...   [ green ]
+[ green: content ][ green: option1 ][ green: option2 ]
+[ green: option3 ][ green: option4 ]   ...   [ green: difficulty ]
 ```
 
 NEEDS_EDITS row where `option3` and `correctOption` were edited:
@@ -85,7 +86,7 @@ NEEDS_EDITS row where `option3` and `correctOption` were edited:
 [ amber: option4 ]   ...   [ DARK AMBER BOLD: option1 ]   ...
 ```
 
-You scan the Original sheet's `qc_status` column, jump to the same row number in Corrected, and the dark-amber cells tell you exactly what changed.
+You scan the Original sheet's `qc_status` column, read the `qc_changes` cell for the full narrative, then jump to the same row number in Corrected — dark-amber cells tell you exactly what changed.
 
 ## What it catches
 

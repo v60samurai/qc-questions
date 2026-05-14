@@ -6,6 +6,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- **Corrected sheet is now upload-ready as-is.** `ALIGNED` rows previously
+  appeared as blank green cells; they now carry the original row content
+  verbatim with a green fill. A PM can drop the fill colours and re-upload the
+  sheet directly — it is the single post-QC source of truth.
+
+### Added
+- **`qc_changes` audit column** on the original sheet, placed immediately after
+  `qc_status`. For each `NEEDS_EDITS` row it carries a wrap-text narrative with
+  `CORRECTNESS:` / `DIFFICULTY:` sections (omitted when null) and an
+  `EDITS APPLIED:` bulleted list of every applied edit. Rows with
+  `confidence: LOW` and no auto-applied edits get a `human review required`
+  line. The cell fill mirrors `qc_status` (amber / red) and the column width
+  is set to 80 for at-a-glance reading.
+
 ## [0.1.0] - 2026-05-13
 
 Initial public release.

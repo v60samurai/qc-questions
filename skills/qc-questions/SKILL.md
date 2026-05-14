@@ -80,9 +80,15 @@ digraph qc_flow {
 IRT (Modified Angoff + a-proxy + c-proxy) is the **internal reasoning method**, not the deliverable. The deliverable is:
 
 **For xlsx batch input:** a single output workbook with three sheets.
-1. The **original sheet** is preserved verbatim, with one new column appended: `qc_status` (`ALIGNED` or `NEEDS_EDITS`). At-a-glance scan of which rows need work.
+1. The **original sheet** is preserved verbatim, with two new audit columns appended:
+   - `qc_status` — `ALIGNED` or `NEEDS_EDITS`, colour-coded for at-a-glance scanning (green / amber / red-on-LOW-confidence).
+   - `qc_changes` — a human-readable narrative for every `NEEDS_EDITS` row: a `CORRECTNESS:` section (omitted when null), a `DIFFICULTY:` section (omitted when null), then an `EDITS APPLIED:` block listing each edit as `• <field>: <why>`. Rows where confidence is `LOW` and no edits were auto-applied carry `EDITS: none auto-applied — human review required`. The cell mirrors the `qc_status` fill colour and is wrap-text formatted so the whole story is readable in one column.
 2. A **`QC Legend`** sheet — small colour key explaining what each fill means in the original and Corrected sheets.
-3. A **`Corrected` sheet** with the same headers as the original. Every row appears with edits applied to the editable fields only (`content`, `option1..option6`, `correctOption`). The marked `subject`, `topics`, and `difficulty` columns are NEVER changed by the QC — they are the spec the item must match. The Corrected sheet is upload-ready: plain-text edits to content/option fields are auto-wrapped in `<p>…</p>` to match the platform's HTML expectation.
+3. A **`Corrected` sheet** with the same headers as the original (no audit columns). It is the **production-ready post-QC source of truth** and can be uploaded as-is:
+   - **`ALIGNED` rows** carry the original row content **verbatim** (copied from the input sheet) with a green fill. The PM can drop the fills and re-upload directly.
+   - **`NEEDS_EDITS` rows** show the post-edit content for the whole row (original values + edits applied), with an amber row fill and dark-amber + bold on the specific cells that changed. Plain-text edits to `content` / `option1..option6` are auto-wrapped in `<p>…</p>` to match the platform's HTML expectation.
+   - **`NEEDS_EDITS` rows with `confidence: LOW`** use a red row fill instead of amber and carry the original content un-edited (human reviewer to decide).
+   - The marked `subject`, `topics`, and `difficulty` columns are NEVER changed by the QC — they are the spec the item must match.
 
 **For standalone questions:** a single YAML verdict block listing (a) what's off and (b) the exact edits to align it to the marked subject/topic/difficulty.
 
@@ -175,10 +181,16 @@ Parallel subagent dispatch is **not optional** for batch QC. The main agent's co
    lean verdicts per QC_PROTOCOL.md Step 7. Write verdicts.json.
 
 6. python3 scripts/qc_xlsx.py write <input.xlsx> verdicts.json <output.xlsx>
-   - Original sheet: + one column 'qc_status' (ALIGNED | NEEDS_EDITS)
-   - New 'Corrected' sheet: every row with edits applied in-cell
-     (correctOption flipped, difficulty retagged, text rewritten; <p>…</p>
-     auto-wrap for content/option fields).
+   - Original sheet: + two audit columns
+       'qc_status'  — ALIGNED | NEEDS_EDITS, colour-coded.
+       'qc_changes' — narrative of what's off + every edit applied, wrap-text,
+                      fill mirrors qc_status.
+   - New 'Corrected' sheet: production-ready post-QC output.
+       ALIGNED rows are the original content verbatim, green-filled.
+       NEEDS_EDITS rows have edits applied in-cell (correctOption flipped,
+       text rewritten; <p>…</p> auto-wrap for content/option fields),
+       amber row fill with dark-amber+bold on changed cells.
+       LOW-confidence rows are red-filled with original content (escalate).
 
 7. Emit aggregate report (REPORT_TEMPLATE.md) — counts by status, must-fix-first
    list, low-confidence escalations.
@@ -212,4 +224,4 @@ Parallel subagent dispatch is **not optional** for batch QC. The main agent's co
 - `DIFFICULTY_RUBRIC.md` — IRT-aligned rubric (Modified Angoff + a-proxy + c-proxy + edit prescription library)
 - `SUBAGENT_PROMPT.md` — canonical prompt template for blind-solve subagents (mandatory for batch QC)
 - `REPORT_TEMPLATE.md` — exact output schema (lean per-row + aggregate)
-- `scripts/qc_xlsx.py` — xlsx I/O: read holds back correctOption; write produces a two-sheet workbook (Original + qc_status, Corrected sheet with edits applied)
+- `scripts/qc_xlsx.py` — xlsx I/O: `read` holds back `correctOption`; `write` produces a three-sheet workbook (Original + `qc_status` + `qc_changes` audit columns, QC Legend, Corrected sheet which is production-ready — ALIGNED rows verbatim, NEEDS_EDITS rows with edits applied in-cell)

@@ -32,12 +32,14 @@ Step 3 — Run the canonical xlsx-batch workflow from SKILL.md:
 6. `python3 ${CLAUDE_PLUGIN_ROOT}/skills/qc-questions/scripts/qc_xlsx.py write <input.xlsx> /tmp/qc_verdicts.json <output.xlsx>`
 
 Step 4 — Output workbook structure (verify after write):
-- The **original sheet** is preserved verbatim with one new column `qc_status` placed at the **next truly empty column** in the sheet (scan all cells, not just headers). Each row's `qc_status` cell is color-coded: green = ALIGNED, amber = NEEDS_EDITS, red = NEEDS_EDITS with `confidence: LOW`.
+- The **original sheet** is preserved verbatim with two new audit columns placed at the **next truly empty columns** (scan all cells, not just headers).
+  - `qc_status` — `ALIGNED` / `NEEDS_EDITS`, colour-coded: green = ALIGNED, amber = NEEDS_EDITS, red = NEEDS_EDITS with `confidence: LOW`.
+  - `qc_changes` (immediately after `qc_status`) — wrap-text narrative for every NEEDS_EDITS row: `CORRECTNESS:` (omitted if null), `DIFFICULTY:` (omitted if null), then `EDITS APPLIED:` with one `• <field>: <why>` per edit. If no edits were auto-applied: `EDITS: none auto-applied — human review required` (LOW confidence) or the strengthen-distractors fallback. Fill mirrors `qc_status` (amber/red); column width ~80.
 - A **`QC Legend`** sheet documents the colour code.
-- A **`Corrected` sheet** is created with the same headers as the original. Per-row behaviour:
-  - **ALIGNED** rows are completely blank (no values) with a light green fill across the row.
+- A **`Corrected` sheet** is created with the same headers as the original (no audit columns). It is the **production-ready post-QC output** — the PM can drop the fills and upload directly. Per-row behaviour:
+  - **ALIGNED** rows carry the original row content verbatim, with a light green fill across the row.
   - **NEEDS_EDITS** rows show the post-edit content for the whole row (original values + edits applied), with a light amber fill on the row and a dark-amber + bold fill on cells that were actually edited so the diff pops at a glance.
-  - **NEEDS_EDITS with `confidence: LOW`** rows use a light red row fill instead of amber (signal: escalate to human review before applying).
+  - **NEEDS_EDITS with `confidence: LOW`** rows use a light red row fill instead of amber and carry the original content un-edited (signal: escalate to human review before applying).
   - Plain-text edits to `content` / `option1..option6` are auto-wrapped in `<p>…</p>` so the Corrected rows remain upload-ready for the assessment platform.
 
 **HARD CONSTRAINT — respect the marked spec:** `subject`, `topics`, and `difficulty` are the SPEC the question must match. They are NEVER edited by the QC. If an item drifts (e.g., marked EASY but Angoff lands in MEDIUM), the edits adjust `content` / `option1..option6` / `correctOption` to bring the item back to the marked tags. If the item cannot be aligned via content edits (e.g., a quant problem mistakenly tagged Verbal Ability), the verdict is `confidence: LOW` with a `correctness_issue` of "construct mismatch — escalate to author" and zero edits. The xlsx writer rejects (with a stderr warning) any edit whose `field` is `subject`, `topics`, or `difficulty`.
