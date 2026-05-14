@@ -47,7 +47,8 @@ from html.parser import HTMLParser
 from pathlib import Path
 
 import openpyxl
-from openpyxl.styles import Font, PatternFill
+from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.utils import get_column_letter
 
 # Color codes (Excel's standard Good/Neutral/Bad palette + accent)
 GREEN_FILL = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")        # ALIGNED — no change
@@ -72,9 +73,13 @@ MANDATORY_HEADERS = [
     "difficulty",
 ]
 
-ORIGINAL_QC_COLUMN = "qc_status"  # Only column appended to the original sheet
-CORRECTED_SHEET_NAME = "Corrected"  # New sheet containing post-edit rows
-LEGEND_SHEET_NAME = "QC Legend"     # Small sheet documenting the color code
+ORIGINAL_QC_COLUMN = "qc_status"           # Status column appended to the original sheet
+ORIGINAL_QC_CHANGES_COLUMN = "qc_changes"  # Narrative audit column appended next to qc_status
+CORRECTED_SHEET_NAME = "Corrected"         # New sheet containing post-edit rows
+LEGEND_SHEET_NAME = "QC Legend"            # Small sheet documenting the color code
+
+# Audit columns appended to the original sheet — excluded from the Corrected sheet.
+ORIGINAL_AUDIT_COLUMNS = {ORIGINAL_QC_COLUMN, ORIGINAL_QC_CHANGES_COLUMN}
 
 # Fields the LLM may target in `edits`. Edits to other fields are ignored
 # (and IMMUTABLE_FIELDS specifically generate a warning to stderr).
@@ -117,6 +122,41 @@ def _normalize_field(field):
     return "content" if field == "stem" else field
 
 
+def _format_qc_changes(verdict, applied_edits):
+    """Build the human-readable narrative for the qc_changes cell.
+
+    Sections are separated by a blank line. `applied_edits` is the subset of
+    `verdict["edits"]` that the writer actually wrote into the Corrected sheet
+    (immutable-field edits that were dropped do not appear).
+    """
+    if verdict.get("status") != "NEEDS_EDITS":
+        return None
+
+    sections = []
+    correctness = verdict.get("correctness_issue")
+    if correctness:
+        sections.append(f"CORRECTNESS: {correctness}")
+    difficulty = verdict.get("difficulty_issue")
+    if difficulty:
+        sections.append(f"DIFFICULTY: {difficulty}")
+
+    if applied_edits:
+        bullets = "\n".join(
+            f"  • {_normalize_field(e.get('field'))}: {e.get('why', '')}"
+            for e in applied_edits
+        )
+        sections.append("EDITS APPLIED:\n" + bullets)
+    else:
+        if verdict.get("confidence") == "LOW":
+            sections.append("EDITS: none auto-applied — human review required")
+        else:
+            sections.append(
+                "EDITS: none auto-applied — strengthen distractors per difficulty note"
+            )
+
+    return "\n\n".join(sections)
+
+
 def _write_legend_sheet(wb):
     """Create (or replace) the QC Legend sheet documenting the colour code."""
     if LEGEND_SHEET_NAME in wb.sheetnames:
@@ -127,11 +167,11 @@ def _write_legend_sheet(wb):
         ("Colour", "Where it appears",                                 "Meaning"),
         ("GREEN",      "qc_status cell (Original) · whole row (Corrected)",
                        "ALIGNED — correctness and difficulty both match the marked values. No edit needed."),
-        ("AMBER",      "qc_status cell (Original) · whole row (Corrected)",
-                       "NEEDS_EDITS — apply the edits shown in the Corrected sheet."),
+        ("AMBER",      "qc_status + qc_changes cells (Original) · whole row (Corrected)",
+                       "NEEDS_EDITS — apply the edits shown in the Corrected sheet; qc_changes carries the narrative."),
         ("DARK AMBER", "individual cell in a NEEDS_EDITS row (Corrected)",
                        "This specific cell was edited. Compare with the same cell in the Original sheet to see the change."),
-        ("RED",        "qc_status cell (Original) · whole row (Corrected)",
+        ("RED",        "qc_status + qc_changes cells (Original) · whole row (Corrected)",
                        "NEEDS_EDITS with LOW confidence. Escalate to a human reviewer before applying."),
     ]
 
@@ -166,8 +206,11 @@ def _write_legend_sheet(wb):
         column=1,
         value=(
             "How to use: scan the qc_status column on the original sheet. For each amber or red row, "
-            "open the same row number on the 'Corrected' sheet — the cells highlighted in dark amber "
-            "are the ones that changed; non-edited cells in that row are shown for context."
+            "read the qc_changes cell for the full narrative (correctness issue, difficulty issue, "
+            "and every edit applied), then open the same row number on the 'Corrected' sheet — the "
+            "cells highlighted in dark amber are the ones that changed. The Corrected sheet is the "
+            "production-ready output: ALIGNED rows carry the original content verbatim so you can "
+            "upload the sheet as-is (drop the fills first if your platform doesn't ignore them)."
         ),
     )
     note.font = Font(italic=True)
@@ -320,9 +363,9 @@ def cmd_write(args):
     wb, ws, raw_headers, headers = _read_workbook(in_path)
     _validate_headers(headers)
 
-    # ---- 1. ORIGINAL sheet: append qc_status to the NEXT TRULY EMPTY column.
-    # Scan the entire sheet (not just the header row) so we never overwrite
-    # data that happens to live past the last named header.
+    # ---- 1. ORIGINAL sheet: append qc_status + qc_changes to the next truly
+    # empty columns. Scan the entire sheet (not just the header row) so we
+    # never overwrite data that happens to live past the last named header.
     refreshed_headers = [c.value for c in ws[1]]
     if ORIGINAL_QC_COLUMN in refreshed_headers:
         qc_status_col = refreshed_headers.index(ORIGINAL_QC_COLUMN) + 1
@@ -336,53 +379,72 @@ def cmd_write(args):
         header_cell = ws.cell(row=1, column=qc_status_col, value=ORIGINAL_QC_COLUMN)
         header_cell.font = BOLD_FONT
 
-    for excel_row in range(2, ws.max_row + 1):
-        v = by_row.get(excel_row)
-        if v is None:
-            continue
-        status = v.get("status")
-        cell = ws.cell(row=excel_row, column=qc_status_col, value=status)
-        if status == "ALIGNED":
-            cell.fill = GREEN_FILL
-        elif status == "NEEDS_EDITS":
-            cell.fill = RED_FILL if v.get("confidence") == "LOW" else AMBER_FILL
+    # qc_changes lives immediately after qc_status. Detect existing placement
+    # so re-runs don't drift; otherwise allocate the next column.
+    refreshed_headers = [c.value for c in ws[1]]
+    if ORIGINAL_QC_CHANGES_COLUMN in refreshed_headers:
+        qc_changes_col = refreshed_headers.index(ORIGINAL_QC_CHANGES_COLUMN) + 1
+    else:
+        qc_changes_col = qc_status_col + 1
+        header_cell = ws.cell(
+            row=1, column=qc_changes_col, value=ORIGINAL_QC_CHANGES_COLUMN
+        )
+        header_cell.font = BOLD_FONT
+    ws.column_dimensions[get_column_letter(qc_changes_col)].width = 80
 
     # ---- 2. CORRECTED sheet: rebuild from scratch.
     if CORRECTED_SHEET_NAME in wb.sheetnames:
         del wb[CORRECTED_SHEET_NAME]
     cs = wb.create_sheet(CORRECTED_SHEET_NAME)
 
-    named_headers = [h for h in raw_headers if h is not None and h != ORIGINAL_QC_COLUMN]
+    named_headers = [
+        h for h in raw_headers if h is not None and h not in ORIGINAL_AUDIT_COLUMNS
+    ]
     for i, h in enumerate(named_headers, start=1):
         hcell = cs.cell(row=1, column=i, value=h)
         hcell.font = BOLD_FONT
 
-    # 3. Per row:
-    #    - ALIGNED      → copy the original row content verbatim, fill GREEN.
-    #                     The Corrected sheet is the production-ready post-QC
-    #                     output, so a user can drop the fills and re-upload it
-    #                     as-is.
-    #    - NEEDS_EDITS  → write the post-edit content, fill row AMBER (or RED
-    #                     if LOW confidence). Cells that were actually edited
-    #                     get DARK_AMBER + bold font so the diff pops.
+    # 3. Per row, apply verdict-driven behaviour:
+    #    - ALIGNED      → write the original row content verbatim, fill GREEN.
+    #                     The Corrected sheet is now the production-ready
+    #                     source of truth for re-upload.
+    #    - NEEDS_EDITS  → write the post-edit content, fill row AMBER
+    #                     (or RED if LOW confidence). Cells that were actually
+    #                     edited get DARK_AMBER + bold so the diff pops.
+    #    Also write the qc_changes narrative back onto the original sheet.
+    allow_retag = bool(getattr(args, "allow_retag", False))
+
     for excel_row in range(2, ws.max_row + 1):
         v = by_row.get(excel_row)
 
         # Start from the original row content for every status.
         record = {}
         for i, h in enumerate(raw_headers, start=1):
-            if h is None or h == ORIGINAL_QC_COLUMN:
+            if h is None or h in ORIGINAL_AUDIT_COLUMNS:
                 continue
             record[h] = ws.cell(row=excel_row, column=i).value
 
-        if v is None or v.get("status") == "ALIGNED":
+        # Write qc_status on the original sheet.
+        status = v.get("status") if v else None
+        if status is not None:
+            status_cell = ws.cell(row=excel_row, column=qc_status_col, value=status)
+            if status == "ALIGNED":
+                status_cell.fill = GREEN_FILL
+            elif status == "NEEDS_EDITS":
+                status_cell.fill = (
+                    RED_FILL if v.get("confidence") == "LOW" else AMBER_FILL
+                )
+
+        if v is None or status == "ALIGNED":
+            # Corrected sheet: copy the original row verbatim, fill GREEN.
             for i, h in enumerate(named_headers, start=1):
                 cell = cs.cell(row=excel_row, column=i, value=record.get(h))
                 cell.fill = GREEN_FILL
             continue
 
-        allow_retag = bool(getattr(args, "allow_retag", False))
+        # NEEDS_EDITS: apply edits, tracking which actually landed.
         changed_fields = set()
+        applied_edits = []
         for edit in v.get("edits") or []:
             field = _normalize_field(edit.get("field"))
             if field in IMMUTABLE_FIELDS:
@@ -399,11 +461,13 @@ def cmd_write(args):
                     continue
                 record[field] = edit.get("to")
                 changed_fields.add(field)
+                applied_edits.append(edit)
                 continue
             if field not in EDITABLE_FIELDS or field not in record:
                 continue
             record[field] = _maybe_html_wrap(field, edit.get("to"))
             changed_fields.add(field)
+            applied_edits.append(edit)
 
         row_fill = RED_FILL if v.get("confidence") == "LOW" else AMBER_FILL
 
@@ -414,6 +478,15 @@ def cmd_write(args):
                 cell.font = BOLD_FONT
             else:
                 cell.fill = row_fill
+
+        # qc_changes narrative on the original sheet, fill mirrors qc_status.
+        narrative = _format_qc_changes(v, applied_edits)
+        if narrative is not None:
+            changes_cell = ws.cell(
+                row=excel_row, column=qc_changes_col, value=narrative
+            )
+            changes_cell.fill = row_fill
+            changes_cell.alignment = Alignment(wrap_text=True, vertical="top")
 
     # ---- 4. LEGEND sheet documenting the colour code.
     _write_legend_sheet(wb)
@@ -431,7 +504,8 @@ def cmd_write(args):
     wb.save(out_path)
     sys.stderr.write(
         f"Wrote {out_path}\n"
-        f"  - Original '{ws.title}': qc_status appended at column {qc_status_col}\n"
+        f"  - Original '{ws.title}': qc_status at column {qc_status_col}, "
+        f"qc_changes at column {qc_changes_col}\n"
         f"  - '{LEGEND_SHEET_NAME}' sheet: colour-code legend\n"
         f"  - '{CORRECTED_SHEET_NAME}' sheet: ALIGNED rows populated verbatim+green "
         f"(upload-ready), NEEDS_EDITS rows show post-edit content (amber row, "

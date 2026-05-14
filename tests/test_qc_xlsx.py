@@ -141,6 +141,23 @@ def test_qc_status_lands_at_next_truly_empty_column(written_workbook: Path):
     assert headers.index("qc_status") == 12
 
 
+def test_qc_changes_lands_immediately_after_qc_status(written_workbook: Path):
+    wb = openpyxl.load_workbook(written_workbook)
+    ws = wb["Sheet1"]
+    headers = [c.value for c in ws[1]]
+    assert "qc_changes" in headers
+    assert headers.index("qc_changes") == headers.index("qc_status") + 1
+
+
+def test_qc_changes_column_has_wide_width(written_workbook: Path):
+    wb = openpyxl.load_workbook(written_workbook)
+    ws = wb["Sheet1"]
+    headers = [c.value for c in ws[1]]
+    from openpyxl.utils import get_column_letter
+    col_letter = get_column_letter(headers.index("qc_changes") + 1)
+    assert ws.column_dimensions[col_letter].width == 80
+
+
 def test_qc_status_fills_match_severity(written_workbook: Path):
     wb = openpyxl.load_workbook(written_workbook)
     ws = wb["Sheet1"]
@@ -161,6 +178,65 @@ def test_qc_status_fills_match_severity(written_workbook: Path):
         assert cell.fill.start_color.rgb == fill, f"row {row_no} fill"
 
 
+def test_qc_changes_aligned_rows_are_empty(written_workbook: Path):
+    wb = openpyxl.load_workbook(written_workbook)
+    ws = wb["Sheet1"]
+    col = [c.value for c in ws[1]].index("qc_changes") + 1
+    for row_no in (2, 3, 6, 9):
+        cell = ws.cell(row=row_no, column=col)
+        assert cell.value is None, f"row {row_no} qc_changes should be empty"
+
+
+def test_qc_changes_needs_edits_row_carries_full_narrative(written_workbook: Path):
+    wb = openpyxl.load_workbook(written_workbook)
+    ws = wb["Sheet1"]
+    col = [c.value for c in ws[1]].index("qc_changes") + 1
+    # Row 4: wrong-key correctness issue, no difficulty issue, one edit.
+    cell = ws.cell(row=4, column=col)
+    val = cell.value
+    assert val is not None
+    assert "CORRECTNESS:" in val
+    assert "DIFFICULTY:" not in val  # difficulty_issue is null on row 4
+    assert "EDITS APPLIED:" in val
+    assert "  • correctOption:" in val
+    assert "fixes correctness" in val
+    assert cell.fill.start_color.rgb == AMBER
+    assert cell.alignment.wrap_text is True
+
+
+def test_qc_changes_difficulty_only_row_has_difficulty_section(written_workbook: Path):
+    wb = openpyxl.load_workbook(written_workbook)
+    ws = wb["Sheet1"]
+    col = [c.value for c in ws[1]].index("qc_changes") + 1
+    # Row 5: difficulty mismatch only, one option2 edit.
+    val = ws.cell(row=5, column=col).value
+    assert "CORRECTNESS:" not in val
+    assert "DIFFICULTY:" in val
+    assert "EDITS APPLIED:" in val
+    assert "  • option2:" in val
+
+
+def test_qc_changes_low_confidence_no_edits_emits_human_review_line(written_workbook: Path):
+    wb = openpyxl.load_workbook(written_workbook)
+    ws = wb["Sheet1"]
+    col = [c.value for c in ws[1]].index("qc_changes") + 1
+    # Row 8: construct mismatch, LOW confidence, zero edits.
+    cell = ws.cell(row=8, column=col)
+    val = cell.value
+    assert "CORRECTNESS:" in val
+    assert "EDITS: none auto-applied — human review required" in val
+    assert cell.fill.start_color.rgb == RED
+
+
+def test_qc_changes_sections_separated_by_blank_line(written_workbook: Path):
+    wb = openpyxl.load_workbook(written_workbook)
+    ws = wb["Sheet1"]
+    col = [c.value for c in ws[1]].index("qc_changes") + 1
+    # Row 4 has CORRECTNESS + EDITS APPLIED — sections must be blank-line-separated.
+    val = ws.cell(row=4, column=col).value
+    assert "\n\n" in val
+
+
 def test_corrected_aligned_rows_are_populated_verbatim_and_green(written_workbook: Path):
     """ALIGNED rows must carry the original content so the Corrected sheet is
     upload-ready as the single source of truth. The whole row is green-filled."""
@@ -170,6 +246,9 @@ def test_corrected_aligned_rows_are_populated_verbatim_and_green(written_workboo
     wb = openpyxl.load_workbook(written_workbook)
     cs = wb["Corrected"]
     dst_headers = [c.value for c in cs[1]]
+    # Audit columns must NOT appear on the Corrected sheet.
+    assert "qc_status" not in dst_headers
+    assert "qc_changes" not in dst_headers
     for row_no in (2, 3, 6, 9):
         for h in dst_headers:
             src_col = src_headers.index(h) + 1
@@ -183,6 +262,7 @@ def test_corrected_aligned_rows_are_populated_verbatim_and_green(written_workboo
             assert cell.fill.start_color.rgb == GREEN, (
                 f"row {row_no} col {h} should be green-filled"
             )
+            # Not edited → no dark-amber/bold accent.
             assert cell.font.bold is False
 
 
