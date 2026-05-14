@@ -100,17 +100,29 @@ irt_proxies:
 
 ## Step 6 — Prescribe Edits (if any flag fires)
 
+You — solver — write the edit. You have full content visibility (in batch mode the subagent is the solver; in standalone mode you are). Deferring drift to a "human review" downstream is a failure mode: by the time the row reaches a reviewer, the QC has already lost its judgement. Write the edit now.
+
 Edits must be operationally executable. Bad:
 > "Make the question harder."
 
 Good:
 > "In `option3`, replace 'plays' with 'play' — currently a clearly-wrong distractor (subject-verb agreement violated). Replace with a more tempting distractor that fails on a *different* rule (e.g., dangling modifier) to raise C4 from 2 to 4."
 
-Use the prescription library in [DIFFICULTY_RUBRIC.md](DIFFICULTY_RUBRIC.md). Every edit names the field (`stem` / `option1` / etc.), the operation (`replace` / `add` / `remove`), and the exact text change.
+Use the prescription library in [DIFFICULTY_RUBRIC.md](DIFFICULTY_RUBRIC.md). Every edit names the field (`stem` / `option1` / etc.), the operation (`replace` / `add` / `remove`), and the exact text change. Empty `edits` arrays are allowed **only** when the obstruction is external to the QC pipeline (missing chart, malformed source cell, construct mismatch) — and only with `confidence: LOW` so the row gets red-painted and surfaced for human attention.
 
 ## Step 7 — Emit Verdict (Lean, Edit-Centric)
 
 The user wants only two things per row: **what's off** and **exactly what to change**. Internal IRT reasoning (Angoff_pct, proxy_a, proxy_c, MQC) drove your judgement in Step 5 — it does NOT appear in the output.
+
+**Batch mode — main agent is a pass-through composer.** When this protocol runs inside the parallel subagent pipeline, the subagent has already produced `proposed_edits` per row (see [SUBAGENT_PROMPT.md](SUBAGENT_PROMPT.md) — the prescription table maps each detected issue to a paste-able edit, and the subagent has full content visibility so it is the right place to write the edit). The main agent's job on compose is:
+
+1. Pass `subagent.proposed_edits` straight into `verdict.edits` with **no regeneration**. The subagent already wrote the edit; rewriting it on compose loses the blind-solve provenance.
+2. Set `verdict.confidence = subagent.confidence`. **Do not down-grade for drift.** The autonomous-by-default rule means the subagent's confidence already accounts for whether it could prescribe a fix.
+3. Add at most ONE cross-row edit the subagent structurally could not produce: a `correctOption` flip when `my_answer` ≠ marked key and `subagent.confidence == HIGH`. The subagent never sees the marked key, so this single edit is the documented exception to pass-through.
+
+Anything else the main agent invents is a regeneration and breaks the architecture. If the subagent flagged drift but emitted no edits at HIGH/MED confidence, that is a subagent regression — the writer (`scripts/qc_xlsx.py`) catches it with a stderr warning and bumps the row's fill to RED, but the main agent should NOT paper over it by inventing edits at compose time.
+
+**Standalone mode** (no subagent): you are both solver and prescriber. Run Steps 1–6 yourself, then emit the verdict below. Every NEEDS_EDITS row MUST carry at least one concrete edit unless the obstruction is genuinely external (construct mismatch, missing chart, malformed source cell) — in which case `confidence: LOW` and `edits: []`.
 
 Emit a single YAML block per row:
 
@@ -136,8 +148,9 @@ Output rules:
 - For `correctOption` edits, `from` and `to` are enum values (`option1..option6`).
 - For text edits, `from` must be the verbatim current text (not a paraphrase) and `to` is the verbatim replacement.
 - If correctness AND difficulty are both off, list correctness edits first; check whether the correctness fix already resolves the difficulty issue before adding more edits.
-- If the item is misaligned with its marked subject/topic AND no `content`/`option` edit can fix it (construct mismatch), emit `correctness_issue` describing the mismatch + `confidence: LOW` + empty `edits` — escalate to a human author rather than silently retagging.
+- If the item is misaligned with its marked subject/topic AND no `content`/`option` edit can fix it (construct mismatch), emit `correctness_issue` describing the mismatch + `confidence: LOW` + empty `edits` — escalate to a human author rather than silently retagging. This is the canonical case for empty `edits`.
 - `confidence: LOW` → still emit any edits you are confident in, but the writer will paint the row red so the user knows to escalate before applying.
+- **Autonomous-by-default:** every NEEDS_EDITS row MUST carry at least one concrete edit in `edits`. Empty `edits` are allowed ONLY when `confidence: LOW` AND the obstruction is external (construct mismatch, missing chart, malformed source). The xlsx writer enforces this with a stderr warning + RED fill if a NEEDS_EDITS row at MED/HIGH has empty edits — it does not block the write but does make the regression visible.
 
 What stays *inside* the LLM's working memory and never appears in output:
 
