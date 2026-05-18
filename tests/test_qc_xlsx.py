@@ -85,10 +85,26 @@ def test_read_separates_keys_from_questions():
     parsed = _run_read()
     assert "questions" in parsed
     assert "_keys" in parsed
-    assert len(parsed["questions"]) == 8
-    assert len(parsed["_keys"]) == 8
+    assert len(parsed["questions"]) == 9
+    assert len(parsed["_keys"]) == 9
     for q in parsed["questions"]:
         assert "correctOption" not in q, "correctOption must not leak into question payload"
+
+
+def test_read_holds_back_both_audit_targets():
+    """Dual-blind invariant: both correctOption AND marked difficulty must be
+    stripped from `questions` and held in `_keys`. The marked difficulty is the
+    spec the QC is auditing against — if a subagent saw it, the difficulty
+    rating would be a post-hoc rationalization of the tag, not an audit signal.
+    """
+    parsed = _run_read()
+    for q in parsed["questions"]:
+        assert "correctOption" not in q, "correctOption leaked into questions"
+        assert "difficulty" not in q, "marked difficulty leaked into questions"
+    for k in parsed["_keys"]:
+        assert "correctOption" in k, "correctOption missing from _keys"
+        assert "difficulty" in k, "marked difficulty missing from _keys"
+        assert set(k.keys()) >= {"row", "correctOption", "difficulty"}
 
 
 def test_read_strips_html_from_content_and_options():
@@ -101,7 +117,7 @@ def test_read_strips_html_from_content_and_options():
 def test_read_preserves_row_numbers_starting_at_2():
     parsed = _run_read()
     rows = [q["row"] for q in parsed["questions"]]
-    assert rows == [2, 3, 4, 5, 6, 7, 8, 9]
+    assert rows == [2, 3, 4, 5, 6, 7, 8, 9, 10]
 
 
 # ---------------------------------------------------------------------------

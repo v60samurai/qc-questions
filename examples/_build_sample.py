@@ -2,21 +2,37 @@
 Build examples/sample_bank.xlsx and examples/sample_bank__qc.expected.xlsx
 for regression testing and onboarding.
 
-The sample bank is 8 questions with deliberately planted errors so QC has
-something interesting to find:
+The sample bank is 9 questions with deliberately planted errors so QC has
+something interesting to find. Each row teaches one mode the dual-blind
+discipline catches:
 
-  row 2  ALIGNED clean grammar item, EASY band
-  row 3  ALIGNED clean register item, EASY band
-  row 4  NEEDS_EDITS — wrong key (option3 marked but option2 is the only
-         defensibly-correct answer). HIGH confidence.
-  row 5  NEEDS_EDITS — band misaligned: MEDIUM-band item tagged EASY.
-         Edit one option to drop the trap so Angoff returns to EASY band.
-  row 6  ALIGNED clean SVA item, MEDIUM band
-  row 7  NEEDS_EDITS — ambiguous: two grammatically valid options.
-         Rewrite one to break the tie. HIGH confidence.
-  row 8  NEEDS_EDITS — construct mismatch: arithmetic problem tagged
-         Verbal Ability. LOW confidence escalation, no auto-edits.
-  row 9  ALIGNED clean reading comprehension item, MEDIUM band
+  row 2   ALIGNED clean grammar item, EASY band — control: both audit
+          targets match.
+  row 3   ALIGNED clean register item, EASY band — control.
+  row 4   NEEDS_EDITS — wrong key (option3 marked but option2 is the only
+          defensibly-correct answer). HIGH confidence. **correctOption
+          flip** triggered by my_answer ≠ marked correctOption.
+  row 5   NEEDS_EDITS — band misaligned: MEDIUM-difficulty item tagged
+          EASY. Edit one option to drop the prepositional-phrase trap so
+          the item returns to EASY-band behaviour. Demonstrates that
+          identify-the-error item types carry difficulty in the options
+          themselves, not just the question prompt.
+  row 6   ALIGNED clean SVA item, MEDIUM band — control.
+  row 7   NEEDS_EDITS — ambiguous: two grammatically valid options.
+          Rewrite one to break the tie. HIGH confidence.
+  row 8   NEEDS_EDITS — construct mismatch: arithmetic problem tagged
+          Verbal Ability. LOW confidence escalation, no auto-edits.
+  row 9   ALIGNED clean reading comprehension item, MEDIUM band — control.
+  row 10  NEEDS_EDITS — **dual-blind canonical case**. Single-step
+          arithmetic item tagged MEDIUM. Subagent's blind difficulty
+          rating returns EASY (1 conceptual step). On reveal, my_blind
+          (EASY) ≠ marked (MEDIUM) → main agent picks the subagent's
+          to_one_band_harder alignment_prescription and applies a STEM
+          edit (adds a purity-adjustment step). The answer changes from
+          option2 to option4 — main agent also flips correctOption on
+          key reveal as the documented cross-row exception. This row
+          showcases what the dual-blind discipline catches that a
+          single-blind (correctOption-only) audit would have missed.
 """
 from __future__ import annotations
 
@@ -179,6 +195,26 @@ ROWS = [
         "topics": "Reading Comprehension",
         "difficulty": "MEDIUM",
     },
+    # row 10 — NEEDS_EDITS, dual-blind canonical case (single-step item tagged MEDIUM)
+    {
+        "content": _p(
+            "Geetanjali prepares a drip-irrigation solution where fertilizer concentrate "
+            "and water are mixed in the ratio <strong>3 : 22</strong>. The total solution "
+            "required for one field section is <strong>475 litres</strong>. How many litres "
+            "of fertilizer concentrate are needed?"
+        ),
+        "option1": _p("57 litres"),
+        "option2": _p("60 litres"),
+        "option3": _p("63.5 litres"),
+        "option4": _p("71.25 litres"),
+        "option5": None,
+        "option6": None,
+        "correctOption": "option1",  # correct under the 1-step solve (3/25 * 475 = 57)
+        "questionType": "MULTIPLE_CHOICE_QUESTION",
+        "subject": "Quantitative Ability",
+        "topics": "Ratios and Proportions",
+        "difficulty": "MEDIUM",  # tagged MEDIUM but intrinsic complexity is EASY (1 step)
+    },
 ]
 
 
@@ -292,6 +328,59 @@ EXPECTED_VERDICTS_LIST = [
         "correctness_issue": None,
         "difficulty_issue": None,
         "edits": [],
+        "confidence": "HIGH",
+    },
+    {
+        # Dual-blind canonical case. The subagent's my_blind_difficulty = EASY
+        # (1 conceptual step: apply a given ratio to a total). After reveal,
+        # main agent sees marked = MEDIUM, picks subagent's
+        # alignment_prescriptions.to_one_band_harder (which adds a purity step
+        # and changes the correct answer from option1 → option4), passes
+        # through as a stem edit, AND adds a correctOption flip (cross-row
+        # exception) since the post-edit correct answer is now option4.
+        "row": 10,
+        "status": "NEEDS_EDITS",
+        "correctness_issue": (
+            "Marked option1 (57 L). Under the stem rewrite that aligns the item to its "
+            "marked MEDIUM band, the correct answer becomes option4 (71.25 L)."
+        ),
+        "difficulty_issue": (
+            "Blind-rated EASY (1 conceptual step: apply a given ratio to a total). "
+            "Marked MEDIUM. One-band gap → align via stem-add: insert a purity-adjustment "
+            "constraint so the solve becomes a 2-step proportional + scaling chain."
+        ),
+        "edits": [
+            {
+                "field": "content",
+                "from": _p(
+                    "Geetanjali prepares a drip-irrigation solution where fertilizer concentrate "
+                    "and water are mixed in the ratio <strong>3 : 22</strong>. The total solution "
+                    "required for one field section is <strong>475 litres</strong>. How many litres "
+                    "of fertilizer concentrate are needed?"
+                ),
+                "to": (
+                    "Geetanjali needs <strong>475 litres</strong> of a drip-irrigation mix where "
+                    "<em>pure</em> fertilizer concentrate and water are combined in the ratio "
+                    "<strong>3 : 22</strong>. Her stock fertilizer is only <strong>80% pure</strong> "
+                    "(the remaining 20% is inert filler excluded from the 475 L target). How many "
+                    "litres of stock concentrate must she add?"
+                ),
+                "why": (
+                    "aligns from blind-rated EASY to marked MEDIUM via stem-add "
+                    "(purity-adjustment is the second conceptual step); answer shifts from "
+                    "57 L → 71.25 L (option1 → option4)"
+                ),
+            },
+            {
+                "field": "correctOption",
+                "from": "option1",
+                "to": "option4",
+                "why": (
+                    "fixes correctness after the stem-add alignment edit changed the "
+                    "defensibly-correct answer"
+                ),
+            },
+        ],
         "confidence": "HIGH",
     },
 ]

@@ -6,14 +6,15 @@ Catches the failures that humans miss when reviewing hundreds of items: silently
 
 ## Why this exists
 
-LLMs are bad at QCing answer keys because once they see `correctOption=option2`, they rationalise option2 as right. This plugin breaks that failure mode structurally: every blind solve happens in a fresh subagent context that has *literally never seen* the marked key. Then the main agent reveals keys, composes verdicts, and writes an edit-centric output.
+LLMs are bad at QCing assessment items because once they see `correctOption=option2`, they rationalise option2 as right. **And once they see `difficulty=MEDIUM`, they rationalise the item as MEDIUM** — counting just enough conceptual steps to land on the marked band. This plugin breaks both failure modes structurally: every blind solve AND every difficulty rating happens in a fresh subagent context that has *literally never seen* either audit target. Then the main agent reveals keys, composes verdicts, and writes an edit-centric output.
 
-Four things distinguish this from "just ask Claude to QC my questions":
+Five things distinguish this from "just ask Claude to QC my questions":
 
-1. **Blind-solve protocol via parallel subagents.** Six rows per worker, all batches dispatched concurrently. The subagent context cannot leak the marked answer because it never received it.
-2. **IRT-anchored difficulty estimation, not vibes.** Each item gets a Modified Angoff %-correct estimate (for a minimally-qualified candidate at the cut), a discrimination proxy (`a`), and a pseudo-guessing proxy (`c`). The marked EASY/MEDIUM/HARD band is checked against this estimate.
-3. **The marked tags are the spec, not editable.** `subject`, `topics`, `difficulty` are immutable. If an item drifts, the plugin edits `content` / `options` / `correctOption` to pull it back to the marked tags. Never silently retag.
-4. **Autonomous-by-default — the subagent auto-prescribes distractor rewrites for difficulty drift, multi-correct risks, and ambiguity.** Previously these were flagged for human review and shipped with empty edits arrays; now every NEEDS_EDITS row at HIGH or MED confidence comes back with paste-able edits already written into the Corrected sheet. Only LOW-confidence rows (construct mismatch, missing chart, malformed source) hold back for human attention. The writer emits a stderr warning + RED fill if any row breaks this contract.
+1. **Dual-blind discipline via parallel subagents.** Both `correctOption` (the answer key) AND the marked `difficulty` band are held back as audit targets. Six rows per worker, all batches dispatched concurrently. The subagent context cannot leak either target because it never received them. New in v0.2 — see [`examples/EXAMPLES.md`](examples/EXAMPLES.md) row 10 for the canonical case this catches that a single-blind audit would miss.
+2. **IRT-anchored difficulty estimation, not vibes.** Each item gets a Modified Angoff %-correct estimate (for a minimally-qualified candidate at the cut), a discrimination proxy (`a`), and a pseudo-guessing proxy (`c`). The subagent commits a blind difficulty band based on conceptual-step count BEFORE the main agent reveals the marked band; mismatch triggers a mandatory stem-edit alignment.
+3. **The marked tags are the spec, not editable.** `subject`, `topics`, `difficulty` are immutable. If an item drifts, the plugin edits `content` / `options` / `correctOption` to pull it back to the marked tags. **Never re-rate the item to match the tag** — that's the difficulty-side rationalization failure. The blind rating is the audit signal; the marked band is the target; the gap closes via stem edit.
+4. **Autonomous-by-default — the subagent auto-prescribes BOTH correctness-layer AND difficulty-layer edits.** Every NEEDS_EDITS row at HIGH or MED confidence comes back with paste-able edits already written into the Corrected sheet. The subagent emits a forward-looking `alignment_prescriptions` pair (one stem-add candidate, one stem-remove candidate) so the main agent can apply the right direction on difficulty mismatch without a second round-trip. Only LOW-confidence rows (construct mismatch, missing chart, malformed source, two-band difficulty gap) hold back for human attention. The writer emits a stderr warning + RED fill if any row breaks this contract.
+5. **Layer separation is non-negotiable.** Difficulty fixes live in the STEM (add/remove a conceptual step). Discrimination fixes live in the DISTRACTORS (replace throwaways with named-misconception traps). Swapping a distractor to "fix" difficulty is parameter contamination — the plugin refuses to do it.
 
 ## Install
 
@@ -93,10 +94,11 @@ You scan the Original sheet's `qc_status` column, read the `qc_changes` cell for
 
 | Failure mode | How it's detected | Output |
 |---|---|---|
-| Wrong answer key | Blind solve disagrees with marked `correctOption` | `correctOption` edit |
+| Wrong answer key | Blind `my_answer` ≠ marked `correctOption` on key reveal | `correctOption` edit |
 | Two defensibly-correct options | Subagent flags `multiple_correct_risk` | distractor rewrite |
 | Ambiguous stem | Subagent flags `ambiguity_risk` | stem rewrite |
-| Item mistagged into wrong band | Angoff_pct outside marked band's window | `content`/`option` edits to pull Angoff back into the marked band |
+| **Item mistagged into wrong band (dual-blind catch)** | Blind `my_blind_difficulty` ≠ marked `difficulty` on reveal | **stem edit** picked from the subagent's `alignment_prescriptions.to_one_band_harder` or `.to_one_band_easier` — adds or removes one conceptual step to align the item to the marked band. NEVER a distractor swap (parameter contamination). |
+| Two-band difficulty gap (e.g., blind=EASY, marked=HARD) | One-band stem edit cannot bridge the gap defensibly | `confidence: LOW` + escalation, no auto-edit |
 | Weak distractors (low `a`) | proxy_a ≤ 2 | distractor rewrite |
 | Inflated guess floor (high `c`) | proxy_c ≥ 3 | distractor rewrite |
 | Construct mismatch (item tests wrong subject/topic) | Subagent flags `construct_mismatch` | `confidence: LOW` + escalation note (no auto-edit) |
@@ -146,8 +148,11 @@ qc-questions/
 │       └── scripts/
 │           └── qc_xlsx.py     # xlsx I/O
 ├── examples/
-│   ├── sample_bank.xlsx
-│   ├── sample_bank__qc.expected.xlsx
+│   ├── EXAMPLES.md                       # row-by-row walkthrough of the demo
+│   ├── _build_sample.py                  # source of truth — regenerates the demo bank
+│   ├── sample_bank.xlsx                  # 9-row demo input
+│   ├── sample_bank.expected_verdicts.json
+│   ├── sample_bank__qc.expected.xlsx     # precomputed three-sheet output
 │   └── mqc_presets.md
 ├── tests/
 │   └── test_qc_xlsx.py

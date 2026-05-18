@@ -9,7 +9,7 @@ description: Use when QC-ing an IRT-aligned MCQ assessment bank — either a .xl
 
 High-stakes IRT-aligned assessment questions fail in four ways: (1) marked answer is wrong, (2) marked answer is one of *several* defensible answers, (3) the item's pre-calibration difficulty (proxy-b) does not match the tagged band, (4) the item has poor discrimination (proxy-a) or inflated guessing floor (proxy-c) and will produce noisy IRT parameters once deployed. This skill catches all four with a **blind-solve protocol** (you commit to your answer before seeing `correctOption`) and an **IRT-aligned rubric**: Modified Angoff for difficulty, distractor-functioning analysis for discrimination, and effective-options counting for guessing-resistance — with concrete edit prescriptions.
 
-**Core principle:** Solve each question as if you were the minimally-qualified candidate (MQC), *blind to the answer key*. Then estimate item difficulty by Modified Angoff (% of MQCs who would get it right), score discrimination and guessing-resistance, and compare to the marked band. This is the single most important rule in the skill — it prevents the LLM's default "rationalize the marked answer" failure mode and replaces vibes-based difficulty calls with IRT-consistent estimation.
+**Core principle:** Solve each question as if you were the minimally-qualified candidate (MQC), *blind to the answer key*. Then score difficulty by **counting conceptual steps in the canonical solve** (intrinsic complexity — the b-parameter), score discrimination by analysing distractor quality (the a-parameter), and compare each to its layer. **Difficulty is fixed by stem rewrites; discrimination is fixed by distractor edits. The two layers are independent and must never be confused.** This is the single most important rule in the skill — it prevents both the LLM's default "rationalize the marked answer" failure mode AND the more subtle "swap a distractor to fake difficulty" parameter-contamination mode.
 
 ## When to Use
 
@@ -34,14 +34,14 @@ digraph qc_flow {
   "Input" [shape=diamond];
   "Standalone Q" [shape=box];
   "xlsx batch" [shape=box];
-  "Parse + strip HTML" [shape=box];
+  "Parse + strip HTML (hold BOTH correctOption AND difficulty in _keys)" [shape=box];
   "Define MQC (minimally-qualified candidate)" [shape=box];
   "Blind-solve (no correctOption visible)" [shape=box, style=filled, fillcolor=lightyellow];
   "Self-consistency check (quant/logic only)" [shape=box];
-  "Reveal correctOption + compare" [shape=box];
-  "Modified Angoff estimate (b-proxy)" [shape=box];
+  "Blind difficulty rating (no marked difficulty visible)" [shape=box, style=filled, fillcolor=lightyellow];
   "Score a-proxy (discrimination) + c-proxy (guessing)" [shape=box];
-  "Map b-proxy to band; compare to marked" [shape=box];
+  "Reveal _keys (correctOption AND marked difficulty) + compare" [shape=box];
+  "On difficulty mismatch: mandatory stem edits (Rule 4)" [shape=box];
   "Prescribe edits if misaligned" [shape=box];
   "Severity tag (P0/P1/P2)" [shape=box];
   "Per-question verdict" [shape=box];
@@ -49,31 +49,35 @@ digraph qc_flow {
 
   "Input" -> "Standalone Q" [label="single"];
   "Input" -> "xlsx batch" [label="file"];
-  "Standalone Q" -> "Parse + strip HTML";
-  "xlsx batch" -> "Parse + strip HTML";
-  "Parse + strip HTML" -> "Define MQC (minimally-qualified candidate)";
+  "Standalone Q" -> "Parse + strip HTML (hold BOTH correctOption AND difficulty in _keys)";
+  "xlsx batch" -> "Parse + strip HTML (hold BOTH correctOption AND difficulty in _keys)";
+  "Parse + strip HTML (hold BOTH correctOption AND difficulty in _keys)" -> "Define MQC (minimally-qualified candidate)";
   "Define MQC (minimally-qualified candidate)" -> "Blind-solve (no correctOption visible)";
   "Blind-solve (no correctOption visible)" -> "Self-consistency check (quant/logic only)";
-  "Self-consistency check (quant/logic only)" -> "Reveal correctOption + compare";
-  "Reveal correctOption + compare" -> "Modified Angoff estimate (b-proxy)";
-  "Modified Angoff estimate (b-proxy)" -> "Score a-proxy (discrimination) + c-proxy (guessing)";
-  "Score a-proxy (discrimination) + c-proxy (guessing)" -> "Map b-proxy to band; compare to marked";
-  "Map b-proxy to band; compare to marked" -> "Prescribe edits if misaligned";
+  "Self-consistency check (quant/logic only)" -> "Blind difficulty rating (no marked difficulty visible)";
+  "Blind difficulty rating (no marked difficulty visible)" -> "Score a-proxy (discrimination) + c-proxy (guessing)";
+  "Score a-proxy (discrimination) + c-proxy (guessing)" -> "Reveal _keys (correctOption AND marked difficulty) + compare";
+  "Reveal _keys (correctOption AND marked difficulty) + compare" -> "On difficulty mismatch: mandatory stem edits (Rule 4)";
+  "On difficulty mismatch: mandatory stem edits (Rule 4)" -> "Prescribe edits if misaligned";
   "Prescribe edits if misaligned" -> "Severity tag (P0/P1/P2)";
   "Severity tag (P0/P1/P2)" -> "Per-question verdict";
   "Per-question verdict" -> "Aggregate report + write-back to xlsx" [label="if batch"];
 }
 ```
 
-## The Seven Hard Rules
+## Hard Rules
 
-1. **Blind solve.** Read `content` + options ONLY. Hide `correctOption` from your working memory until after you commit. No peeking — see [QC_PROTOCOL.md](QC_PROTOCOL.md) for the discipline.
+1. **Blind solve.** The subagent reads `content` + options + `subject` + `topics` + `questionType` ONLY. `scripts/qc_xlsx.py read` holds back BOTH `correctOption` AND `difficulty` in a separate `_keys` block; subagent prompts are built from the questions list only (`_keys` never leaks into a subagent prompt). The subagent commits (a) an answer AND (b) a difficulty rating for EVERY row before the main agent reveals `_keys`. See [QC_PROTOCOL.md](QC_PROTOCOL.md).
 2. **Self-consistency for quant/logic.** Solve numerical/logical items by two independent methods. If they disagree, flag P0 — your own answer is unreliable, escalate to human.
-3. **Difficulty is IRT-anchored, not vibes.** Use Modified Angoff for the b-proxy plus discrimination (a-proxy) and pseudo-guessing (c-proxy) scoring per [DIFFICULTY_RUBRIC.md](DIFFICULTY_RUBRIC.md). Never tag "MEDIUM because it feels medium".
-4. **State the MQC.** Difficulty is defined relative to the **minimally-qualified candidate** (MQC) for the assessment — the candidate sitting at the cut score. Write the MQC definition in `qc_notes` for every verdict. If the MQC isn't obvious from `subject`/`topics`, ask once at session start and reuse.
-5. **Edits must be concrete and minimal.** If misaligned, output the exact text to add/remove/swap, not "make it harder". Prescriptions library is in the rubric file, mapped to which IRT proxy each edit moves. **Every NEEDS_EDITS row MUST carry at least one concrete edit in `proposed_edits`. Empty edits are only allowed when `confidence: LOW` AND the obstruction is external to the QC pipeline (missing chart, malformed source cell). Flagging drift for human review is a failure mode — the subagent has full content visibility, so it must write the edit.**
-6. **Ambiguous or low-discrimination = block ship.** Two defensible answers, no defensible answer, contradictory stem, or a-proxy ≤ 2 all become at-least-P1 verdicts even if `correctOption` happens to match yours. Construct-alignment failure is P0.
-7. **`subject`, `topics`, and `difficulty` are the SPEC, not editable fields.** The marked tags define what this question is supposed to be — they are immutable targets. Never propose an edit that changes them. If the item drifts away from its tags, edit the `content` / `option1..option6` / `correctOption` to pull it BACK to the marked subject, topic, and difficulty band. Retagging would silently change the bank composition; the PM planned a specific count per `(subject, topic, difficulty)` cell and the QC must respect that plan. If the item is so far from its tags that it cannot be aligned without a from-scratch rewrite (e.g., a quant problem marked Verbal Ability), flag `confidence: LOW` and the `correctness_issue` becomes "construct mismatch — escalate" — do NOT silently retag.
+3. **Difficulty is intrinsic solve complexity.** Score it by counting the conceptual steps an MQC must execute in the canonical solve — not by Angoff, not by topic name, not by story complexity. Three arithmetic operations in service of one concept = ONE conceptual step (EASY). Two concepts chained = MEDIUM. 3+ concepts / multi-constraint = HARD. Angoff is a downstream sanity check, not the source of truth. See [DIFFICULTY_RUBRIC.md](DIFFICULTY_RUBRIC.md).
+4. **Blind difficulty rating, then reveal, then mandatory alignment on mismatch.** The subagent commits a blind band (EASY/MEDIUM/HARD) per row using Rule 3 BEFORE the main agent opens `_keys`. After reveal, the main agent compares blind rating to marked band:
+   - **Match** → ALIGNED on the difficulty layer. No difficulty edit.
+   - **Mismatch** → **every effort must be made to align the item via STEM edits** (add a conceptual step to move EASY→MEDIUM, remove one to move HARD→MEDIUM, etc.). Use the prescription library in [DIFFICULTY_RUBRIC.md](DIFFICULTY_RUBRIC.md). The marked band is the spec; the blind rating is the audit signal that the item drifted from spec. **Re-rating the item to match the marked tag is NOT alignment — that is the rationalization failure on difficulty, analogous to "rationalize the marked answer" on correctness. The blind rating wins as the diagnostic; the marked band wins as the target.** Only flag `confidence: LOW` and emit no difficulty edit if the gap is so large that aligning it would require a from-scratch rewrite (e.g., a single-step arithmetic item marked HARD with no defensible chained extension within `topics`).
+5. **Layer separation is non-negotiable.** Difficulty (b) lives in the STEM. Discrimination (a) and guessing-floor (c) live in the DISTRACTORS. When difficulty is mismatched → **rewrite the stem** to add or remove a conceptual step. NEVER swap a distractor to "fix" difficulty — distractor swaps move empirical p-value via carelessness-catching but do NOT change the latent b-parameter. That is parameter contamination. Distractor edits are reserved for proxy_a / proxy_c failures.
+6. **State the MQC.** Difficulty is defined relative to the **minimally-qualified candidate** (MQC) for the assessment — the candidate sitting at the cut score. Write the MQC definition in `qc_notes` for every verdict. If the MQC isn't obvious from `subject`/`topics`, ask once at session start and reuse.
+7. **Edits must be concrete and minimal.** If misaligned, output the exact text to add/remove/swap, not "make it harder". Prescriptions library is in the rubric file, mapped to which IRT proxy each edit moves. **Every NEEDS_EDITS row MUST carry at least one concrete edit in `proposed_edits`. Empty edits are only allowed when `confidence: LOW` AND the obstruction is external to the QC pipeline (missing chart, malformed source cell, construct mismatch, or a difficulty gap too large to bridge without a from-scratch rewrite per Rule 4). Flagging drift for human review is a failure mode — the subagent has full content visibility, so it must write the edit.**
+8. **Ambiguous or low-discrimination = block ship.** Two defensible answers, no defensible answer, contradictory stem, or a-proxy ≤ 2 all become at-least-P1 verdicts even if `correctOption` happens to match yours. Construct-alignment failure is P0.
+9. **`subject`, `topics`, and `difficulty` are the SPEC, not editable fields.** The marked tags define what this question is supposed to be — they are immutable targets. Never propose an edit that changes them. If the item drifts away from its tags, edit the `content` / `option1..option6` / `correctOption` to pull it BACK to the marked subject, topic, and difficulty band. Retagging would silently change the bank composition; the PM planned a specific count per `(subject, topic, difficulty)` cell and the QC must respect that plan. If the item is so far from its tags that it cannot be aligned without a from-scratch rewrite (e.g., a quant problem marked Verbal Ability), flag `confidence: LOW` and the `correctness_issue` becomes "construct mismatch — escalate" — do NOT silently retag.
 
 ## Output — What the User Sees
 
@@ -155,7 +159,7 @@ Severity does not appear in the per-row output unless the user asks for it; it d
 
 ## Workflow — xlsx Batch (MANDATORY: parallel subagents)
 
-Parallel subagent dispatch is **not optional** for batch QC. The main agent's context has seen every `correctOption` during xlsx parsing — only a fresh subagent context can do a structurally-blind solve. Speed is a bonus; correctness is the reason.
+Parallel subagent dispatch is **not optional** for batch QC. The main agent's context has seen every `correctOption` AND every marked `difficulty` during xlsx parsing — only a fresh subagent context can do a structurally-blind solve AND a structurally-blind difficulty rating. Speed is a bonus; correctness is the reason.
 
 ```
 1. Establish MQC for this assessment.
@@ -163,24 +167,32 @@ Parallel subagent dispatch is **not optional** for batch QC. The main agent's co
    - If not: infer from subject/topics and confirm in one line.
 
 2. python3 scripts/qc_xlsx.py read <path>   # strips HTML, prints normalised JSON
-   - Questions go into the "questions" list (NO correctOption).
-   - Keys go into a separate "_keys" block. DO NOT leak _keys into subagent prompts.
+   - Questions go into the "questions" list (NO correctOption, NO difficulty).
+   - Keys go into a separate "_keys" block (correctOption + marked difficulty per row).
+   - DO NOT leak _keys into subagent prompts — both fields are audit targets.
 
 3. Split the questions into batches of 5–8 rows each.
    - Default: 6 rows per batch.
    - 18 rows → 3 batches. 100 rows → ~17 batches.
-   - Write each batch to /tmp/qc_batch<N>.json (questions only).
+   - Write each batch to /tmp/qc_batch<N>.json (questions only — neither
+     correctOption nor difficulty present).
    - Write /tmp/qc_keys.json with the keys (main-agent use only).
 
 4. Dispatch ALL subagent batches in a SINGLE message (multiple Agent tool calls in
    parallel, one per batch). Use the canonical prompt in SUBAGENT_PROMPT.md.
    - Each subagent reads only its batch file and never the keys file.
    - Each returns a JSON array: per-row {my_answer, my_reasoning, multiple_correct_risk,
-     ambiguity_risk, angoff_pct, angoff_reasoning, proxy_a, proxy_c, confidence}.
+     ambiguity_risk, my_blind_difficulty, conceptual_steps, conceptual_steps_note,
+     angoff_pct, angoff_reasoning, proxy_a, proxy_c, proposed_edits, confidence}.
+   - The subagent commits BOTH a blind answer AND a blind difficulty band per row
+     before its prompt completes. Neither field is in its input.
    - Cap parallel dispatch at ~10 subagents per message; queue the rest.
 
-5. Main agent collects subagent outputs, reveals correctOption per row, composes
-   lean verdicts per QC_PROTOCOL.md Step 7. Write verdicts.json.
+5. Main agent collects subagent outputs, reveals BOTH correctOption AND marked
+   difficulty per row from _keys, composes lean verdicts per QC_PROTOCOL.md Step 7.
+   On difficulty mismatch (subagent's my_blind_difficulty ≠ marked difficulty),
+   pass-through the subagent's stem-edit prescription per Rule 4 — do NOT re-rate
+   the item to match the marked band, do NOT silently retag. Write verdicts.json.
 
 6. python3 scripts/qc_xlsx.py write <input.xlsx> verdicts.json <output.xlsx>
    - Original sheet: + two audit columns
@@ -200,20 +212,43 @@ Parallel subagent dispatch is **not optional** for batch QC. The main agent's co
 
 **Three rules that make this work:**
 
-1. **Strip-then-batch:** the parse script in step 2 holds `correctOption` separate. The main agent never writes `correctOption` into a subagent prompt.
+1. **Strip-then-batch:** the parse script in step 2 holds BOTH `correctOption` and marked `difficulty` separate. The main agent never writes either field into a subagent prompt — both are audit targets the subagent must commit blind.
 2. **Parallel in one message:** all batches dispatched as multiple Agent tool calls inside one message run concurrently. Sequential dispatch defeats the speedup.
 3. **Subagent prompt is canonical:** use the template in [SUBAGENT_PROMPT.md](SUBAGENT_PROMPT.md) verbatim, only substituting `<MQC>`, `<BATCH_FILE_PATH>`, `<KEYS_FILE_PATH>`. Do not paraphrase — paraphrasing has historically led to leakage of the "infer the marked answer" pattern.
+
+### Cost discipline (preserve quality, cut tokens)
+
+The blind-solve discipline is the quality floor — it cannot be optimised away. Everything else can be tuned.
+
+| Lever | Rule | Why it's safe |
+|---|---|---|
+| **Batch size** | Default 6 rows per subagent. For files ≤ 8 rows, use a single subagent over the whole file. Never 1-per-row. | Amortizes the prompt load across rows; the subagent's context is still fresh per batch and never sees `correctOption` or marked `difficulty`. |
+| **Model routing** | Subagent workers and verifiers run on **Sonnet** (`model: "sonnet"` on the Agent tool). Main agent (composer) runs on the conversation's default (typically Opus). | Sonnet is plenty for MCQ solve + intrinsic-complexity scoring; the discipline lives in the prompt, not in raw model capability. Sonnet is ~5x cheaper. |
+| **Verifier batching** | One verifier subagent handles all `NEEDS_EDITS` rows in a batch, not one verifier per row. | Same blind-solve guarantee; the verifier never sees the marked key, just the post-edit cell values. |
+| **Skip verification when no answer-affecting edit** | If the only edits in a verdict are distractor swaps that don't touch `correctOption`, verification can be skipped (correctness is structurally unchanged). | The regression risk is in answer-changing edits (stem rewrite, key flip); distractor-only edits are mechanically safe. |
+| **Canonical prompt** | Use the template in [SUBAGENT_PROMPT.md](SUBAGENT_PROMPT.md) verbatim. Do not pad with extra context the subagent doesn't need. | Trimming has been done in the canonical template; further "helpful" additions usually leak the answer key. |
+
+**Concrete cost profile** (7-row CSV, 1 NEEDS_EDITS row, with the discipline above):
+
+- 1 batched blind-solve subagent on Sonnet (≈ 2k tokens out)
+- 1 batched verifier subagent on Sonnet for the NEEDS_EDITS rows (≈ 1.5k tokens out)
+- Main agent on Opus for composition (≈ 3-5k tokens)
+- **Total: ~7-9k tokens** vs. the per-row-Opus pattern's ~25-30k tokens. ~70% cheaper, same audit quality.
 
 ## Common Mistakes
 
 | Mistake | Fix |
 |---|---|
-| Reading `correctOption` first then "checking" it | Strip it from input before solving. Use the script. |
-| Tagging difficulty by topic name ("calculus = HARD") | Estimate Angoff_pct for the stated MQC; let the band fall out of the table. |
+| Reading `correctOption` or marked `difficulty` first then "checking" them | Strip BOTH from input before solving. Use the script — it holds both in `_keys`. |
+| Tagging difficulty by topic name ("calculus = HARD") or by Angoff alone | Score INTRINSIC SOLVE COMPLEXITY first (count conceptual steps). Angoff is a downstream sanity check. |
+| **Re-rating an item to match the marked band after reveal** | Rationalization failure on difficulty (same shape as "rationalize the marked answer"). The subagent's blind rating is the audit signal — if it disagrees with the marked band, that's drift, and the fix is a STEM edit to close the gap, not a re-rate. |
+| Letting a difficulty mismatch slide because "the marked band is roughly right" | Rule 4: mismatch triggers mandatory stem-edit effort. "Close enough" on band tags compounds at bank level — 100 items each off by half a band shifts the assessment's whole θ curve. |
+| **Swapping a distractor to "fix" a difficulty mismatch** | Parameter contamination. Difficulty is fixed in the STEM (add/remove a conceptual step). Distractor edits move discrimination, not difficulty. |
+| Calling an item ALIGNED because Angoff "feels right" despite intrinsic complexity not matching the band | Stage-1 intrinsic complexity is the source of truth. If Angoff agrees with the marked band only because sharp distractors are catching carelessness, the item is still mistagged — rewrite the stem. |
 | Not stating the MQC | Difficulty is meaningless without an MQC anchor. State it in every verdict. |
 | Defaulting Angoff to 50% when unsure | A refusal-to-estimate. Pick a side and write your reasoning. |
 | Skipping a-proxy / c-proxy because difficulty was aligned | Low a or high c are independent ship-blockers (P1). Always score all three. |
-| Flagging drift without a concrete distractor rewrite | The subagent has full content visibility. Write the edit, do not defer to a human. |
+| Flagging drift without a concrete edit | The subagent has full content visibility. Write the edit, do not defer to a human. LOW + empty edits is reserved for genuinely external obstructions (missing chart, construct mismatch). |
 | Marking LOW_CONFIDENCE as OK | LOW_CONFIDENCE is P0 — your QC is the high-stakes gate. |
 | Skipping self-consistency on quant items | Two independent methods is non-negotiable for numerical questions. |
 | Treating HTML tags as content | Strip before reading; preserve math/code/tables. |

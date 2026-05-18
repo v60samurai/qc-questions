@@ -6,6 +6,69 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-05-18
+
+### Changed
+- **Dual-blind discipline.** The audit now holds back BOTH `correctOption` AND
+  the marked `difficulty` band as audit targets. Previously only `correctOption`
+  was stripped from subagent prompts; the subagent saw the marked difficulty
+  and rated it post-hoc, which is the same rationalization failure mode the
+  blind-solve discipline was built to prevent (applied to difficulty instead
+  of correctness). `scripts/qc_xlsx.py read` now drops `difficulty` from each
+  entry in `questions` and emits it inside `_keys` alongside `correctOption`.
+  Subagents commit `my_blind_difficulty` per row before the main agent reveals
+  `_keys`; on mismatch, the main agent picks the subagent's pre-written stem
+  alignment edit and applies it. **The marked band is the spec; the blind
+  rating is the audit signal; the gap closes via stem edit, never via
+  re-rate.** (SKILL.md Rule 4, new.)
+- **`SUBAGENT_PROMPT.md` output schema extended.** Subagents now return
+  `my_blind_difficulty`, `conceptual_steps`, `conceptual_steps_note`, and an
+  `alignment_prescriptions` pair (`to_one_band_harder`, `to_one_band_easier`)
+  per row. The pair is forward-looking — the subagent doesn't know the marked
+  band, so it emits both directional stem-edit candidates and the main agent
+  picks the one that closes the gap (or neither, if `my_blind_difficulty`
+  matches). Single round-trip preserved.
+- **Hard Rules renumbered.** The skill's "Seven Hard Rules" (already 8) became
+  9 with the new Rule 4 (blind difficulty rating + mandatory stem-edit
+  alignment on mismatch + the "never re-rate" prohibition). Header dropped the
+  count.
+- **`QC_PROTOCOL.md` Step 5 restructured.** 5b commits the blind difficulty
+  band before any reveal; 5f does the reveal + compare + mandatory alignment.
+  Step 7 reframed as a dual-target pass-through composer with TWO documented
+  cross-row exceptions (correctOption flip; alignment stem edit picked from
+  the subagent's `alignment_prescriptions`).
+
+### Added
+- **`examples/EXAMPLES.md`** walkthrough — annotates every row of
+  `sample_bank.xlsx` with the failure mode it teaches, and explains why row
+  10 is the canonical case the dual-blind discipline catches that a
+  single-blind audit would have missed.
+- **`sample_bank.xlsx` row 10** — single-step proportion problem tagged
+  MEDIUM. Demonstrates the full dual-blind flow: subagent commits
+  `my_blind_difficulty: EASY` → main agent reveals MEDIUM → picks
+  `to_one_band_harder` stem edit (adds purity-adjustment) → flips
+  `correctOption` from option1 to option4 because the post-edit answer
+  changed.
+- **`test_read_holds_back_both_audit_targets`** locks the dual-blind invariant
+  into the test suite. The test asserts neither `correctOption` nor
+  `difficulty` appears in any `questions` entry, and both appear in every
+  `_keys` entry. A future regression that lets marked difficulty leak back
+  into subagent prompts fails this test immediately.
+- **Difficulty-side rationalization counters** in `QC_PROTOCOL.md`'s
+  Rationalizations Catalogue — twins for every correctness-side counter so
+  the difficulty layer gets the same defensive scaffolding.
+
+### Migration notes
+- Existing `verdicts.json` files remain consumable by `qc_xlsx.py write`
+  unchanged — the writer's contract is unchanged. Only the `read` output and
+  the subagent's intermediate output schema changed.
+- The local Claude Code skill and the Claude.ai-uploadable skill bundle both
+  carry these updates. The local version uses subagent dispatch for the
+  blind solve + blind rate; the Claude.ai version uses the code interpreter
+  with explicit "stop scrolling before `_keys`" discipline.
+
+## [0.1.1] - 2026-05-17
+
 ### Changed
 - **Corrected sheet is now upload-ready as-is.** `ALIGNED` rows previously
   appeared as blank green cells; they now carry the original row content

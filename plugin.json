@@ -1,7 +1,7 @@
 {
   "name": "qc-questions",
-  "version": "0.1.0",
-  "description": "QC IRT-aligned assessment questions for correctness and difficulty alignment from a .xlsx bulk-upload sheet or a single standalone MCQ. Uses Modified Angoff + discrimination/guessing proxies + blind-solve parallel subagents; emits a colour-coded Corrected sheet with exact edits applied.",
+  "version": "0.2.0",
+  "description": "QC IRT-aligned assessment questions for correctness and difficulty alignment from a .xlsx bulk-upload sheet or a single standalone MCQ. Dual-blind discipline holds back BOTH correctOption AND marked difficulty as audit targets — Modified Angoff + discrimination/guessing proxies + blind-solve, blind-difficulty-rate parallel subagents; emits a colour-coded Corrected sheet with exact edits applied.",
   "author": {
     "name": "v60samurai",
     "url": "https://github.com/v60samurai"

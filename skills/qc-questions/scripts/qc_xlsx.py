@@ -7,10 +7,13 @@ Two subcommands:
   read  <input.xlsx>
         Parses the xlsx, validates mandatory headers, strips HTML from
         content/option fields, and prints normalised JSON (one row per
-        question) to stdout. The JSON for each question OMITS correctOption
-        — that field is held back so a subagent can do a blind solve.
-        The "answer key" is printed separately under "_keys" at the end
-        for the main agent to consume after the subagent commits.
+        question) to stdout. The JSON for each question OMITS two fields:
+          - correctOption — held back so the QC can solve blind.
+          - difficulty    — held back so the QC can rate intrinsic complexity
+                            blind, without being anchored to the marked band.
+        Both audit targets are printed separately under "_keys" at the end
+        for the QC to consume AFTER it has committed both a blind answer
+        AND a blind difficulty rating per row.
 
   write <input.xlsx> <verdicts.json> <output.xlsx>
         Reads the original xlsx and a verdicts.json (a list of verdict
@@ -335,15 +338,27 @@ def cmd_read(args):
             "questionType": record.get("questionType"),
             "subject": record.get("subject"),
             "topics": record.get("topics"),
-            "difficulty": record.get("difficulty"),
+            # NOTE: `difficulty` is held back in `_keys` — see comment below.
         }
-        # carry through optional metadata for context (read-only)
+        # carry through optional metadata for context (read-only),
+        # but skip `difficulty` since it's the audit target being held back.
         for h in headers:
+            if h in ("correctOption", "difficulty"):
+                continue
             if h not in MANDATORY_HEADERS and h not in stripped:
                 stripped[h] = record.get(h)
 
-        # critical: hold back correctOption from the question payload
-        keys.append({"row": excel_row, "correctOption": record.get("correctOption")})
+        # critical: hold back BOTH correctOption AND difficulty from the
+        # question payload. correctOption is the answer-key audit target;
+        # difficulty is the band-tag audit target. The QC must commit a
+        # blind answer AND a blind difficulty rating per row before
+        # opening _keys, otherwise both ratings are post-hoc rationalizations
+        # of what was already visible.
+        keys.append({
+            "row": excel_row,
+            "correctOption": record.get("correctOption"),
+            "difficulty": record.get("difficulty"),
+        })
         questions.append(stripped)
 
     out = {"questions": questions, "_keys": keys, "source": str(in_path)}
@@ -435,8 +450,8 @@ def cmd_write(args):
             record[h] = ws.cell(row=excel_row, column=i).value
 
         # Compute effective confidence (auto-LOW guard): a NEEDS_EDITS verdict
-        # at MED/HIGH with an empty edits array is a subagent regression — the
-        # autonomous-by-default rule (SKILL.md rule 5) requires every
+        # at MED/HIGH with an empty edits array is a QC regression — the
+        # autonomous-by-default rule (SKILL.md rule 6) requires every
         # NEEDS_EDITS row to carry a concrete edit unless confidence is LOW
         # and the obstruction is external. Don't fail the write — surface the
         # gap with a stderr warning and paint the row RED so reviewers see it.
@@ -450,7 +465,7 @@ def cmd_write(args):
         ):
             sys.stderr.write(
                 f"  ! row {excel_row}: NEEDS_EDITS at confidence {effective_conf} "
-                f"but no edits supplied — subagent should have prescribed an edit. "
+                f"but no edits supplied — QC should have prescribed an edit. "
                 f"Treating as LOW for fill colour.\n"
             )
             effective_conf = "LOW"

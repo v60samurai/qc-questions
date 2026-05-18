@@ -83,5 +83,26 @@
     "difficulty_issue": null,
     "edits": [],
     "confidence": "HIGH"
+  },
+  {
+    "row": 10,
+    "status": "NEEDS_EDITS",
+    "correctness_issue": "Marked option1 (57 L). Under the stem rewrite that aligns the item to its marked MEDIUM band, the correct answer becomes option4 (71.25 L).",
+    "difficulty_issue": "Blind-rated EASY (1 conceptual step: apply a given ratio to a total). Marked MEDIUM. One-band gap \u2192 align via stem-add: insert a purity-adjustment constraint so the solve becomes a 2-step proportional + scaling chain.",
+    "edits": [
+      {
+        "field": "content",
+        "from": "<p>Geetanjali prepares a drip-irrigation solution where fertilizer concentrate and water are mixed in the ratio <strong>3 : 22</strong>. The total solution required for one field section is <strong>475 litres</strong>. How many litres of fertilizer concentrate are needed?</p>",
+        "to": "Geetanjali needs <strong>475 litres</strong> of a drip-irrigation mix where <em>pure</em> fertilizer concentrate and water are combined in the ratio <strong>3 : 22</strong>. Her stock fertilizer is only <strong>80% pure</strong> (the remaining 20% is inert filler excluded from the 475 L target). How many litres of stock concentrate must she add?",
+        "why": "aligns from blind-rated EASY to marked MEDIUM via stem-add (purity-adjustment is the second conceptual step); answer shifts from 57 L \u2192 71.25 L (option1 \u2192 option4)"
+      },
+      {
+        "field": "correctOption",
+        "from": "option1",
+        "to": "option4",
+        "why": "fixes correctness after the stem-add alignment edit changed the defensibly-correct answer"
+      }
+    ],
+    "confidence": "HIGH"
   }
 ]
