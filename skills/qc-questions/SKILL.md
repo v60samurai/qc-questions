@@ -34,11 +34,13 @@ digraph qc_flow {
   "Input" [shape=diamond];
   "Standalone Q" [shape=box];
   "xlsx batch" [shape=box];
+  "Get MQC + audience-conditional Angoff windows from user" [shape=box, style=filled, fillcolor=lightblue];
   "Parse + strip HTML (hold BOTH correctOption AND difficulty in _keys)" [shape=box];
-  "Define MQC (minimally-qualified candidate)" [shape=box];
   "Blind-solve (no correctOption visible)" [shape=box, style=filled, fillcolor=lightyellow];
   "Self-consistency check (quant/logic only)" [shape=box];
-  "Blind difficulty rating (no marked difficulty visible)" [shape=box, style=filled, fillcolor=lightyellow];
+  "Count conceptual steps (anchor for Angoff estimate)" [shape=box];
+  "Estimate Angoff for THIS stated MQC (includes prep exposure)" [shape=box, style=filled, fillcolor=lightyellow];
+  "Map Angoff -> band via audience-conditional windows -> my_blind_difficulty" [shape=box];
   "Score a-proxy (discrimination) + c-proxy (guessing)" [shape=box];
   "Reveal _keys (correctOption AND marked difficulty) + compare" [shape=box];
   "On difficulty mismatch: mandatory stem edits (Rule 4)" [shape=box];
@@ -47,15 +49,17 @@ digraph qc_flow {
   "Per-question verdict" [shape=box];
   "Aggregate report + write-back to xlsx" [shape=box];
 
-  "Input" -> "Standalone Q" [label="single"];
-  "Input" -> "xlsx batch" [label="file"];
+  "Input" -> "Get MQC + audience-conditional Angoff windows from user";
+  "Get MQC + audience-conditional Angoff windows from user" -> "Standalone Q" [label="single"];
+  "Get MQC + audience-conditional Angoff windows from user" -> "xlsx batch" [label="file"];
   "Standalone Q" -> "Parse + strip HTML (hold BOTH correctOption AND difficulty in _keys)";
   "xlsx batch" -> "Parse + strip HTML (hold BOTH correctOption AND difficulty in _keys)";
-  "Parse + strip HTML (hold BOTH correctOption AND difficulty in _keys)" -> "Define MQC (minimally-qualified candidate)";
-  "Define MQC (minimally-qualified candidate)" -> "Blind-solve (no correctOption visible)";
+  "Parse + strip HTML (hold BOTH correctOption AND difficulty in _keys)" -> "Blind-solve (no correctOption visible)";
   "Blind-solve (no correctOption visible)" -> "Self-consistency check (quant/logic only)";
-  "Self-consistency check (quant/logic only)" -> "Blind difficulty rating (no marked difficulty visible)";
-  "Blind difficulty rating (no marked difficulty visible)" -> "Score a-proxy (discrimination) + c-proxy (guessing)";
+  "Self-consistency check (quant/logic only)" -> "Count conceptual steps (anchor for Angoff estimate)";
+  "Count conceptual steps (anchor for Angoff estimate)" -> "Estimate Angoff for THIS stated MQC (includes prep exposure)";
+  "Estimate Angoff for THIS stated MQC (includes prep exposure)" -> "Map Angoff -> band via audience-conditional windows -> my_blind_difficulty";
+  "Map Angoff -> band via audience-conditional windows -> my_blind_difficulty" -> "Score a-proxy (discrimination) + c-proxy (guessing)";
   "Score a-proxy (discrimination) + c-proxy (guessing)" -> "Reveal _keys (correctOption AND marked difficulty) + compare";
   "Reveal _keys (correctOption AND marked difficulty) + compare" -> "On difficulty mismatch: mandatory stem edits (Rule 4)";
   "On difficulty mismatch: mandatory stem edits (Rule 4)" -> "Prescribe edits if misaligned";
@@ -69,12 +73,21 @@ digraph qc_flow {
 
 1. **Blind solve.** The subagent reads `content` + options + `subject` + `topics` + `questionType` ONLY. `scripts/qc_xlsx.py read` holds back BOTH `correctOption` AND `difficulty` in a separate `_keys` block; subagent prompts are built from the questions list only (`_keys` never leaks into a subagent prompt). The subagent commits (a) an answer AND (b) a difficulty rating for EVERY row before the main agent reveals `_keys`. See [QC_PROTOCOL.md](QC_PROTOCOL.md).
 2. **Self-consistency for quant/logic.** Solve numerical/logical items by two independent methods. If they disagree, flag P0 — your own answer is unreliable, escalate to human.
-3. **Difficulty is intrinsic solve complexity.** Score it by counting the conceptual steps an MQC must execute in the canonical solve — not by Angoff, not by topic name, not by story complexity. Three arithmetic operations in service of one concept = ONE conceptual step (EASY). Two concepts chained = MEDIUM. 3+ concepts / multi-constraint = HARD. Angoff is a downstream sanity check, not the source of truth. See [DIFFICULTY_RUBRIC.md](DIFFICULTY_RUBRIC.md).
-4. **Blind difficulty rating, then reveal, then mandatory alignment on mismatch.** The subagent commits a blind band (EASY/MEDIUM/HARD) per row using Rule 3 BEFORE the main agent opens `_keys`. After reveal, the main agent compares blind rating to marked band:
+3. **Difficulty is the Angoff band predicted for the stated MQC, anchored by conceptual-step count.** EASY/MEDIUM/HARD are defined operationally as Angoff windows for the stated audience: what fraction of the MQC cohort would solve correctly. The conceptual-step count from the canonical solve is the **anchor** that makes the Angoff estimate defensible (without it, Angoff is vibes) — but the band itself comes from Angoff-for-this-audience, NOT from the step count directly. **The same 2-step item is HARD for tier-3, MEDIUM for tier-2, and EASY for tier-1**, because their respective Angoff %s land in different windows. See Rule 6 for audience-conditional window defaults, [DIFFICULTY_RUBRIC.md](DIFFICULTY_RUBRIC.md) for the step-counting rubric.
+4. **Blind difficulty rating, then reveal, then mandatory alignment on mismatch.** The subagent commits a blind band (EASY/MEDIUM/HARD) per row by (a) counting conceptual steps in the canonical solve as the anchor, then (b) estimating Angoff for the stated MQC including the cohort's prep exposure / pattern familiarity, then (c) mapping the estimate to a band via the audience-conditional Angoff windows. All this BEFORE the main agent opens `_keys`. After reveal, the main agent compares blind rating to marked band:
    - **Match** → ALIGNED on the difficulty layer. No difficulty edit.
-   - **Mismatch** → **every effort must be made to align the item via STEM edits** (add a conceptual step to move EASY→MEDIUM, remove one to move HARD→MEDIUM, etc.). Use the prescription library in [DIFFICULTY_RUBRIC.md](DIFFICULTY_RUBRIC.md). The marked band is the spec; the blind rating is the audit signal that the item drifted from spec. **Re-rating the item to match the marked tag is NOT alignment — that is the rationalization failure on difficulty, analogous to "rationalize the marked answer" on correctness. The blind rating wins as the diagnostic; the marked band wins as the target.** Only flag `confidence: LOW` and emit no difficulty edit if the gap is so large that aligning it would require a from-scratch rewrite (e.g., a single-step arithmetic item marked HARD with no defensible chained extension within `topics`).
+   - **Mismatch** → **every effort must be made to align the item via STEM edits** (add a conceptual step to shift Angoff downward when the item is too easy for the audience, remove one to shift Angoff upward when the item is too hard). Use the prescription library in [DIFFICULTY_RUBRIC.md](DIFFICULTY_RUBRIC.md). The marked band is the spec for expected behaviour FOR THIS AUDIENCE; the blind rating is the audit signal that the item won't behave that way. **Re-rating the item to match the marked tag is NOT alignment — that is the rationalization failure on difficulty, analogous to "rationalize the marked answer" on correctness. The blind rating wins as the diagnostic; the marked band wins as the target.** Only flag `confidence: LOW` and emit no difficulty edit if the gap is so large that aligning it requires more than a one-band stem shift (e.g., a 1-step item that tier 1 would solve at 92% but is marked HARD for tier 1 = 10-15% Angoff target → that's a 2+ band gap that cannot be bridged with one stem-add).
 5. **Layer separation is non-negotiable.** Difficulty (b) lives in the STEM. Discrimination (a) and guessing-floor (c) live in the DISTRACTORS. When difficulty is mismatched → **rewrite the stem** to add or remove a conceptual step. NEVER swap a distractor to "fix" difficulty — distractor swaps move empirical p-value via carelessness-catching but do NOT change the latent b-parameter. That is parameter contamination. Distractor edits are reserved for proxy_a / proxy_c failures.
-6. **State the MQC.** Difficulty is defined relative to the **minimally-qualified candidate** (MQC) for the assessment — the candidate sitting at the cut score. Write the MQC definition in `qc_notes` for every verdict. If the MQC isn't obvious from `subject`/`topics`, ask once at session start and reuse.
+6. **State the MQC — it determines the Angoff windows.** Difficulty is conditioned on the **minimally-qualified candidate** (MQC) for the assessment — the candidate sitting at the cut score the assessment is designed to enforce. The MQC determines what Angoff % maps to which band; without an MQC, the skill cannot grade items. Write the MQC definition in `qc_notes` for every verdict. **If the MQC isn't provided at invocation, the skill ASKS once at session start and refuses to proceed without it — it does not infer a default MQC, because the wrong MQC produces silently wrong verdicts.** Suggested defaults (override when the user has different conventions):
+
+   | Audience | HARD Angoff window | MEDIUM | EASY |
+   |---|---|---|---|
+   | **Tier 1** (IIT / NIT / top-tier engineering, CAT-style prep saturated) | 10–25% | 40–65% | 80–95% |
+   | **Tier 2** (state engineering, regional B-schools, moderate prep) | 25–45% | 50–70% | 75–90% |
+   | **Tier 3** (entry-level IT services, broad screening, light prep) | 35–55% | 55–75% | 75–95% |
+   | **General / unknown** | 25–50% | 50–75% | 75–95% |
+
+   Tier-1 HARD = 10-25% specifically because tier-1 candidates have seen most standard CAT / aptitude patterns in prep; to genuinely separate the top 15% from the rest, items must operate above the routine-pattern recognition layer. The skill USES these windows actively in Stage 5d (band mapping); the user can override at invocation with explicit windows.
 7. **Edits must be concrete and minimal.** If misaligned, output the exact text to add/remove/swap, not "make it harder". Prescriptions library is in the rubric file, mapped to which IRT proxy each edit moves. **Every NEEDS_EDITS row MUST carry at least one concrete edit in `proposed_edits`. Empty edits are only allowed when `confidence: LOW` AND the obstruction is external to the QC pipeline (missing chart, malformed source cell, construct mismatch, or a difficulty gap too large to bridge without a from-scratch rewrite per Rule 4). Flagging drift for human review is a failure mode — the subagent has full content visibility, so it must write the edit.**
 8. **Ambiguous or low-discrimination = block ship.** Two defensible answers, no defensible answer, contradictory stem, or a-proxy ≤ 2 all become at-least-P1 verdicts even if `correctOption` happens to match yours. Construct-alignment failure is P0.
 9. **`subject`, `topics`, and `difficulty` are the SPEC, not editable fields.** The marked tags define what this question is supposed to be — they are immutable targets. Never propose an edit that changes them. If the item drifts away from its tags, edit the `content` / `option1..option6` / `correctOption` to pull it BACK to the marked subject, topic, and difficulty band. Retagging would silently change the bank composition; the PM planned a specific count per `(subject, topic, difficulty)` cell and the QC must respect that plan. If the item is so far from its tags that it cannot be aligned without a from-scratch rewrite (e.g., a quant problem marked Verbal Ability), flag `confidence: LOW` and the `correctness_issue` becomes "construct mismatch — escalate" — do NOT silently retag.
@@ -240,7 +253,9 @@ The blind-solve discipline is the quality floor — it cannot be optimised away.
 | Mistake | Fix |
 |---|---|
 | Reading `correctOption` or marked `difficulty` first then "checking" them | Strip BOTH from input before solving. Use the script — it holds both in `_keys`. |
-| Tagging difficulty by topic name ("calculus = HARD") or by Angoff alone | Score INTRINSIC SOLVE COMPLEXITY first (count conceptual steps). Angoff is a downstream sanity check. |
+| Rating difficulty intrinsically and ignoring the stated MQC | The same 2-step item is HARD for tier-3, MEDIUM for tier-2, EASY for tier-1. Intrinsic step count is the ANCHOR; Angoff-for-this-MQC is the BAND. If the user said tier-1, rate against tier-1. |
+| Proceeding without an MQC | The skill refuses. Ask once. Without an MQC the windows aren't anchored, and every verdict is silently wrong. |
+| Tagging difficulty by topic name ("calculus = HARD") or by conceptual-step count alone | Step count is the anchor, not the band. The band comes from where the Angoff-for-MQC estimate lands in the audience-conditional windows. |
 | **Re-rating an item to match the marked band after reveal** | Rationalization failure on difficulty (same shape as "rationalize the marked answer"). The subagent's blind rating is the audit signal — if it disagrees with the marked band, that's drift, and the fix is a STEM edit to close the gap, not a re-rate. |
 | Letting a difficulty mismatch slide because "the marked band is roughly right" | Rule 4: mismatch triggers mandatory stem-edit effort. "Close enough" on band tags compounds at bank level — 100 items each off by half a band shifts the assessment's whole θ curve. |
 | **Swapping a distractor to "fix" a difficulty mismatch** | Parameter contamination. Difficulty is fixed in the STEM (add/remove a conceptual step). Distractor edits move discrimination, not difficulty. |

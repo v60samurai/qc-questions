@@ -1,7 +1,7 @@
 {
   "name": "qc-questions",
-  "version": "0.2.0",
-  "description": "QC IRT-aligned assessment questions for correctness and difficulty alignment from a .xlsx bulk-upload sheet or a single standalone MCQ. Dual-blind discipline holds back BOTH correctOption AND marked difficulty as audit targets — Modified Angoff + discrimination/guessing proxies + blind-solve, blind-difficulty-rate parallel subagents; emits a colour-coded Corrected sheet with exact edits applied.",
+  "version": "0.3.0",
+  "description": "QC IRT-aligned assessment questions for correctness and difficulty alignment from a .xlsx bulk-upload sheet or a single standalone MCQ. Audience-conditional dual-blind discipline: holds back BOTH correctOption AND marked difficulty as audit targets, and grades difficulty as the Angoff band predicted for the STATED MQC (tier-1 HARD = 10-25%, tier-2 = 25-45%, tier-3 = 35-55%, configurable) — not as intrinsic complexity. Same 2-step item is HARD for tier-3, MEDIUM for tier-2, EASY for tier-1; the marked band must match the audience. Modified Angoff + discrimination/guessing proxies + blind-solve, blind-difficulty-rate parallel subagents; emits a colour-coded Corrected sheet with exact edits applied.",
   "author": {
     "name": "v60samurai",
     "url": "https://github.com/v60samurai"

@@ -6,6 +6,34 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-05-18
+
+### Changed
+- **Difficulty is now audience-conditional, not intrinsic.** This is the largest philosophical change since v0.1.0 and reverses a load-bearing assumption from v0.2.0. The skill previously claimed "marked difficulty = intrinsic complexity (conceptual-step count)"; in practice this caused silent audit failures whenever the user invoked QC for a specific cohort (tier-1, tier-2, etc.) — items that were intrinsically 1-2 steps but trivially recalled by tier-1 CAT-prep candidates were getting passed as ALIGNED to a HARD tag, even though tier-1 Angoff for those items is 85-95% (EASY behaviour, not HARD). The v0.3.0 framing: **difficulty is the Angoff band predicted for the stated MQC, anchored by conceptual-step count.** The step count travels with the item; the band travels with the audience. The same 2-step weighted-average item is EASY for tier-1, MEDIUM for tier-2, HARD for tier-3 — because each cohort's Angoff lands in a different audience-conditional window.
+- **Audience-conditional Angoff windows.** SKILL.md Rule 6 now ships defaults per tier:
+  - Tier 1 (IIT/NIT-top, CAT-prep saturated): HARD 10-25%, MEDIUM 40-65%, EASY 80-95%
+  - Tier 2 (state engineering, moderate prep): HARD 25-45%, MEDIUM 50-70%, EASY 75-90%
+  - Tier 3 (entry-level IT-services, light prep): HARD 35-55%, MEDIUM 55-75%, EASY 75-95%
+  - General / unknown MQC: HARD 25-50%, MEDIUM 50-75%, EASY 75-95%
+  Tier-1 HARD is 10-25% (stricter than the 25-50% default) because tier-1 has prep saturation; to discriminate the top 15% from the rest, items must operate above the routine-pattern layer. Users can override windows at invocation.
+- **SUBAGENT_PROMPT.md** schema changed substantially:
+  - Subagents now receive an `angoff_windows` dict from the main agent and MUST use it to map Angoff estimates to bands (no by-feel band picking).
+  - New output fields: `pattern_exposure_note` (HIGH/LOW + one phrase why — does the stated MQC have saturated exposure to this pattern), `angoff_pct_for_stated_mqc` (renamed from `angoff_pct` to make audience-relativity explicit), `boundary_flag` (when estimate lands in a window gap).
+  - `my_blind_difficulty` is now COMPUTED by looking up `angoff_pct_for_stated_mqc` in the supplied `angoff_windows`, not chosen by feel.
+- **QC_PROTOCOL.md Step 5 reordered**: 5a locks the audience-conditional windows, 5b counts steps as the anchor, 5c estimates Angoff for the stated MQC including prep-exposure adjustment, 5d maps to band, 5e sanity-checks. The old "Stage 1 intrinsic complexity is the source of truth" framing is removed.
+- **DIFFICULTY_RUBRIC.md opens with a new "Difficulty Is Audience-Conditional" section** that explains the thermometer analogy (step count = calibration, Angoff for stated MQC = reading; you need both). Worked examples now state the MQC tier explicitly, and a new Example 4 demonstrates the tier-1 two-band-gap on a drilled weighted-average pattern (the canonical case that single-blind audits passed silently).
+
+### Added
+- **MQC is now mandatory load-bearing input.** The skill refuses to grade without an explicit MQC at invocation. Without an MQC, the Angoff windows aren't anchored and every verdict is silently wrong.
+- **Audience-conditional invariant test** (planned for next minor — currently the test suite still asserts the v0.2.0 dual-blind invariant; v0.3.x will add `test_my_blind_difficulty_uses_supplied_windows`).
+- **Past-mistakes memory entry** (local) documenting the audience-mismatch failure mode the v0.2.0 skill kept hitting on Test.xlsx.
+
+### Migration notes
+- Existing `verdicts.json` files remain consumable by `qc_xlsx.py write` unchanged — the writer's contract is unchanged.
+- The `read` script output schema is unchanged from v0.2.0 (both `correctOption` and `difficulty` still held back in `_keys`). Only the subagent prompt + the interpretation of `my_blind_difficulty` changed.
+- If you invoked v0.2.0 without an MQC, you got a silently-wrong verdict against an implicit "neutral MQC". In v0.3.0 the skill asks for an MQC before proceeding. There is no v0.3.0 default MQC.
+- The local Claude Code skill, the Claude.ai-uploadable skill bundle, and this repo all carry the same v0.3.0 logic. The Claude.ai bundle continues to omit `SUBAGENT_PROMPT.md` (single-context flow); subagent-specific instructions in `SKILL.md` and `QC_PROTOCOL.md` apply to local CC + repo only.
+
 ## [0.2.0] - 2026-05-18
 
 ### Changed
