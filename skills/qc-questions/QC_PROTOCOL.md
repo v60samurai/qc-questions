@@ -83,6 +83,19 @@ The same 2-step item lands in DIFFERENT bands across these windows. That is the 
 
 This anchors the Angoff estimate in 5c. The step count is NOT the band — it's the input that makes the Angoff estimate non-arbitrary. A 1-step item with high prep exposure for the stated MQC may still produce a 90% Angoff (EASY for that audience); a 3-step item with low prep exposure may produce a 30% Angoff (HARD for that audience). Counting steps prevents Angoff from drifting into pure vibes.
 
+**5b-bis. Dead-constraint check (constraint-based items only).** For items whose canonical solve relies on filtering a finite solution set against multiple stated constraints — modular arithmetic, Diophantine, multi-condition number-theory, multi-premise logic, constraint deduction — verify each stated constraint contributes to the final answer set:
+
+1. Enumerate the candidate set against ALL stated constraints. Record the final answer(s).
+2. For each constraint C: enumerate again with C removed. If the answer set is unchanged, C is DEAD — it adds apparent step count without adding filtering work.
+3. Flag every dead constraint in `qc_notes` as `dead_constraints: [<list>]`. If any constraint is dead:
+   - The item's true intrinsic difficulty is the step count MINUS the dead constraint(s) — the conceptual_steps anchor must be REDUCED accordingly before the Angoff estimate in 5c.
+   - Prescribe a stem edit: either (a) tighten the range / conditions / coefficients so the dead constraint becomes load-bearing (preferred — preserves authorial intent), or (b) remove the dead constraint and accept the lower difficulty band.
+   - Emit the alignment_prescriptions pair regardless — the dead-constraint fix is INDEPENDENT of the audience-conditional band alignment.
+
+**Dead constraints + empty solution sets are mirror failures.** Both are stem defects where the constraint structure misrepresents the actual filtering work. The dead-constraint check catches both: a constraint that doesn't filter (vestigial) AND a constraint that over-filters (broken).
+
+**Example.** Original Jatin item: (300, 360) × mod 9 = 5 × mod 7 = 2 × odd → empty set (338 fails parity). Mirror case (proposed Chetan rewrite): (95, 200) × mod 9 = 4 × mod 7 = 3 × odd → unique answer 157, parity dead. Fix the first by widening range to admit a CRT candidate that satisfies parity; fix the second by widening range so multiple CRT candidates exist and parity actually filters.
+
 **5c. Estimate Angoff for THIS stated MQC. COMMIT BLIND.** Predict what % of the stated MQC cohort would solve this item correctly. Include:
 - The conceptual-step anchor from 5b
 - Prep-exposure adjustment: has this MQC cohort almost certainly seen this exact pattern in standardised prep (CAT, GMAT, GRE, NIIT-style sheets)? If yes, raise Angoff substantially — pattern recognition collapses the solve to a single recall step regardless of intrinsic complexity. If no, Angoff reflects the cohort's raw problem-solving ability.
@@ -221,6 +234,29 @@ What stays *inside* the LLM's working memory and never appears in output:
 - Self-consistency method-A / method-B traces
 
 If a future user asks "show your IRT reasoning", expand the verdict on request — but the default surface is lean.
+
+**Aggregate-level blueprint-review pass (batch mode only).** After all per-row verdicts are composed, the main agent runs one final scan across the verdict set BEFORE writing the aggregate report:
+
+1. Group rows by `(subject, topic)` section.
+2. Within each section, count rows where `my_blind_difficulty ≠ marked difficulty` by **exactly two bands** (EASY vs HARD in either direction). One-band gaps do not count for this pass — they are handled by the per-row stem-edit prescription per SKILL.md Rule 4.
+3. Split the 2-band-gap count by direction: `overrated` (blind < marked — the section is tagged harder than the items actually behave for the stated MQC) and `underrated` (blind > marked — tagged easier than items behave).
+4. If, within a section, EITHER `overrated_2band / total_in_section > 0.20` OR `underrated_2band / total_in_section > 0.20`, append a `blueprint_review_flag` to the aggregate output with:
+   ```yaml
+   blueprint_review_flag:
+     section: "<subject> / <topic>"
+     direction: overrated | underrated
+     count: <int>           # rows with same-direction 2-band gap
+     section_total: <int>   # rows in section
+     interpretation: |
+       The test author's calibration of what <BAND> means for the stated MQC
+       is broken at the section level, not at the item level. Recalibrate the
+       blueprint for this section before shipping; per-item stem edits will
+       not fix this.
+   ```
+5. Mixed-direction sections (some overrated, some underrated, neither direction >20%) do NOT trigger the flag — that is item-level noise per SKILL.md Rule 4-bis, not a calibration failure. Same-direction concentration is the diagnostic signal.
+6. The aggregate-report writer surfaces every `blueprint_review_flag` at the TOP of the report (above must-fix counts, above low-confidence escalations) so the PM sees the bank-level calibration problem first — it cannot be fixed by accepting per-row edits.
+
+This pass is read-only over the verdict set; it never re-touches per-row verdicts and never changes any row's `confidence` or `edits`. The 2-band gaps already carry `confidence: LOW` with no auto-edit per SKILL.md Rule 4-bis; the aggregate flag is the additional surfacing the bank needs.
 
 ## Red Flags — Stop and Restart
 

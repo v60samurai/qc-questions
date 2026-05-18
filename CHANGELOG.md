@@ -6,6 +6,30 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-05-18
+
+### Added — four structural patches from a tier-1 bank QC postmortem
+
+A user-driven QC postmortem on a 5-item tier-1 numerical-reasoning bank surfaced three classes of item-quality defect that v0.3.0 missed AND one self-inflicted prescription defect in v0.3.0's output. This release names all four as structural and adds the checks.
+
+- **Patch 1 — Dead-constraint check.** New `QC_PROTOCOL.md` Step 5b-bis: for constraint-based items (modular, Diophantine, multi-condition logic), the subagent enumerates the solution set with and without each stated constraint. If removing a constraint doesn't change the answer set, the constraint is DEAD — it adds apparent step count without filtering work. Subagent emits `dead_constraints: [<list>]` per row. The conceptual_steps anchor must be REDUCED by dead-constraint count before the Angoff estimate. Dead constraints and empty solution sets are mirror failures: both are constraint-structure-vs-filtering-work defects.
+
+- **Patch 2 — Two-band gap → blueprint review trigger.** New `SKILL.md` Rule 4-bis (existing Rules 5-9 renumbered to 6-10): a single 2-band gap (e.g., blind EASY vs marked HARD) is still per-row `confidence: LOW` with no auto-edit. But if >20% of items in any (subject, topic) section show 2-band gaps in the SAME direction, the section's blueprint itself needs recalibration. New `blueprint_review_flag: {section, direction, count}` is added at the TOP of the aggregate report (before per-row verdicts) when this fires. Same-direction matters: 4 items all overrated = tag-calibration problem; 2 over + 2 under = item-level noise.
+
+- **Patch 3 — "Formula-recall mistagged as HARD" anti-pattern.** New section in `DIFFICULTY_RUBRIC.md` naming this systemic mistagging class. Items reducing to "recall formula X + plug in numbers" are EASY-to-MEDIUM for any audience that has drilled the pattern — never intrinsically HARD. Subagent emits `mistag_reason: formula_recall_overrated` when a blind EASY/MEDIUM rating against a marked HARD fits this shape. Anti-pattern surfaces as a class in the aggregate report when >50% of HARD-tagged items in a section carry the flag.
+
+- **Patch 4 — Tier-fit observations format in `REPORT_TEMPLATE.md`.** Top-of-aggregate-report section that fires when (a) >40% of section items blind-rate ≤ EASY for the stated MQC, (b) >20% same-direction 2-band gap, (c) >50% HARD-tagged items match formula-recall anti-pattern, (d) >10% construct mismatch. Each observation is P0 advisory and surfaces BEFORE per-row verdicts so PMs see calibration issues first.
+
+### Fixed
+
+- **`alignment_prescriptions.to_one_band_harder` for Chetan (Test.xlsx row 5) corrected.** v0.3.0 emitted a stem rewrite "(95, 200) with mod 9 = 4 + mod 7 = 3 + odd" — in that range only 157 satisfies the mod constraints, so parity adds zero filtering. v0.3.1 widens to (95, 250): candidates satisfying mod 9 + mod 7 are {157, 220}, parity then filters to {157} → load-bearing. The v0.3.1 dead-constraint check (Patch 1) would have caught this at emit time. This was the v0.3.0 output the user audited and surfaced — flagged as `mirror_failure_class` alongside the broken Jatin (300, 360) item.
+
+### Migration notes
+
+- `verdicts.json` writer contract unchanged. New subagent output fields (`dead_constraints`, `mistag_reason`, `blueprint_review_flag`) are optional metadata the writer ignores; they surface in `qc_changes` narrative when present.
+- Aggregate report tier-fit observations are advisory — they do not block writes or modify per-row verdicts. PMs triage them before per-row edits.
+- The Claude.ai bundle now ships the tier-fit-observations and formula-recall anti-pattern docs; subagent-specific schemas (`dead_constraints` field) still apply only to local-CC and repo (Claude.ai single-context mode).
+
 ## [0.3.0] - 2026-05-18
 
 ### Changed

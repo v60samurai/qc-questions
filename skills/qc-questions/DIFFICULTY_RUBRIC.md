@@ -133,6 +133,22 @@ Count distractors that a randomly-guessing MQC could plausibly select (i.e., not
 
 For 5-option or 6-option items, scale proportionally. Flag any item with C-proxy ≥ 3 as P1 regardless of b alignment — it leaks information through poor distractors.
 
+## Anti-Pattern: Formula-Recall Mistagged as HARD
+
+A common mistagging pattern across many published banks: items tagged HARD when their only barrier is recalling a standard formula (weighted mean, harmonic mean for average speed, percentage change, mixture/dilution `(1 − r/v)^n`, simple-interest vs compound-interest, ratio-of-totals, time-and-work LCM). These items are EASY-to-MEDIUM for any audience that has drilled the formula — they are NEVER intrinsically HARD.
+
+**Diagnostic test.** If the canonical solve reduces to "remember formula X, plug in numbers" the item is EASY. If it reduces to "remember formula X, plug in numbers, then do one more reasoning step that the formula doesn't cover" the item is MEDIUM. HARD requires one of:
+- **3+ chained CONCEPTS** (not chained operations within one concept)
+- **Non-obvious problem decomposition** — the right approach isn't pattern-matchable from the stem; the MQC must construct the method, not retrieve it
+- **Multi-constraint integration where constraints INTERACT** (not independent filters that can be checked one-by-one)
+- **Domain-specific abstraction the cohort has not drilled** — genuinely novel framing within the marked subject/topic
+
+**How this manifests.** When > 50% of a section's HARD-tagged items reduce to "recall formula X" under the dead-constraint + step-count audit, the section is suffering from formula-recall mistagging. The fix is NOT to swap distractors or add a dead constraint to the stem; it's to RE-AUTHOR with the multi-concept / non-obvious-decomposition / multi-constraint-integration criteria above.
+
+**Subagent emit.** When the subagent rates a stem as EASY-or-MEDIUM blind but the marked tag is HARD AND the canonical solve fits the "recall formula X + plug in numbers" shape, emit `mistag_reason: formula_recall_overrated` in qc_notes. This lets the aggregate report identify the anti-pattern as a class, not just as a set of isolated 2-band gaps.
+
+**Operational rule.** Formula recall ≠ HARD. Multi-step formula recall = MEDIUM at most. HARD = the cohort can't pattern-match their way to the method.
+
 ## Putting It Together
 
 | Diagnostic | What it means | Default severity |
@@ -309,6 +325,20 @@ Item: 2-step weighted-average problem with one sub-group reported separately. Ma
 - **Marked**: HARD (tier-1 HARD window 10-25%).
 - **Diagnosis**: blind Angoff lands in EASY window, marked HARD → TWO-BAND gap. The tier-1 cohort has drilled this exact pattern; a single stem-add will shift Angoff by ~15-20pp at best (still landing in MEDIUM, not HARD).
 - **Verdict**: `confidence: LOW`, surface as `"item won't discriminate at tier-1 cut score; either re-author with 3+ chained constraints introducing novel composition the cohort has not drilled, or relax marked tag to MEDIUM/EASY in blueprint review."` Do not attempt the single-step bridge.
+
+### Example 5 — Dead-constraint detection (Chetan stem rewrite case)
+
+Item: Number-theory stem of the form "Find N such that 95 < N < 200, N mod 9 = 4, N mod 7 = 3, and N is odd." Emitted as a `to_one_band_harder` alignment prescription on a prior pass. MQC stated as tier-2.
+
+- **Step-count anchor (as emitted)**: 4 constraints → 3 conceptual steps (CRT residue solve via mod 9 ∩ mod 7, then parity filter, then range filter). MEDIUM-to-HARD anchor.
+- **Dead-constraint check (Step 5b-bis)**:
+  - Enumerate full solution set: CRT gives N ≡ 31 (mod 63) → candidates in (95, 200) are 94 + 63 = 157 (next is 220, out of range). Single candidate 157.
+  - Drop parity: candidates are still {157}. 157 is odd; parity filters nothing.
+  - **`dead_constraints: ["odd"]`** — parity adds zero filtering. An MQC who skips parity gets the same answer.
+- **Diagnosis**: emitted stem-edit prescription is itself defective. True intrinsic difficulty is step count MINUS dead parity = 2 conceptual steps (CRT residue solve + range filter). The stem masquerades as a 3-step solve but rewards skipping a step.
+- **Re-prescribed stem (parity becomes load-bearing)**: widen range so multiple CRT candidates exist and parity actually filters. Replace `95 < N < 250` (instead of `< 200`). Now candidates in (95, 250) are {157, 220}; parity drops 220 (even) → unique answer 157, and parity is load-bearing because dropping it yields {157, 220} — two candidates, ambiguous answer.
+- **Verdict**: re-emit the alignment prescription with the widened range. Self-check the new stem against Step 5b-bis before passing through — confirm no constraint is still dead under the rewrite.
+- **Mirror case (informational)**: original Jatin item (300 < P < 360, mod 9 = 5, mod 7 = 2, odd) has empty solution set (338 is the unique CRT candidate, fails parity). Same defect class — constraint structure misrepresents the filtering work, just in the over-filter direction. Both are caught by Step 5b-bis.
 
 ## Reporting Fields (changes from the cognitive-load rubric)
 

@@ -2,6 +2,28 @@
 
 The output answers two questions per item: **what's off** and **exactly what to change**. Everything else (IRT proxies, MQC definition, Angoff math) stays in the LLM's working memory — it's the *method*, not the *deliverable*.
 
+## Tier-Fit Observations (top-of-report — surface before per-row verdicts)
+
+Per-row verdicts audit each item's marked-band-vs-blind-band fit independently. Tier-fit observations aggregate those signals to surface bank-level / section-level calibration issues that no single row can show.
+
+Surface a tier-fit observation when any of these conditions holds:
+
+1. **Section composition below floor.** When > 40% of items in a (subject, topic) section have blind-rated band ≤ EASY for a tier-1 MQC (or ≤ MEDIUM for tier-2), surface:
+   > "**Section <subject>/<topic>:** <X>% of items (<n>/<total>) blind-rate as EASY-or-below for the stated tier-1 MQC. Information function is suboptimal at the cut score — the section under-discriminates. Recommend replacing <n> items with stems rated MEDIUM+ for tier-1 (HARD reserved for top-of-range discrimination)."
+
+2. **Same-direction 2-band gaps cluster (blueprint review).** When > 20% of items in a section show 2-band gaps in the SAME direction:
+   > "**Blueprint review — <subject>/<topic>:** <n>/<total> items are 2-band-gapped <overrated|underrated> for the stated MQC. This is a tag-calibration problem at the section level, not a per-item drift. Recommend a blueprint pass before re-uploading: either re-author the affected items to actually function at their marked bands, or relax the marked tags to match the items' actual behaviour for the audience."
+
+3. **Formula-recall anti-pattern cluster.** When > 50% of HARD-tagged items in a section carry `mistag_reason: formula_recall_overrated`:
+   > "**Anti-pattern detected — <subject>/<topic>:** <n>/<total> HARD-tagged items reduce to formula-recall + plug-in. Formula recall is not HARD-band behaviour. Recommend re-authoring the affected items with multi-concept chaining, non-obvious decomposition, or interacting constraints."
+
+4. **Construct mismatch cluster.** When > 10% of items in a section flag construct_mismatch (item tests wrong subject/topic):
+   > "**Construct drift — <subject>/<topic>:** <n>/<total> items appear to test a different construct than tagged. Recommend a tagging-taxonomy review before shipping."
+
+Each observation is ADVISORY — it does not produce per-row edits. It informs the PM's test-design or item-authoring choices. The aggregate report carries any tier-fit observation that fires at the top, BEFORE the per-row verdict list, so PMs see calibration issues first.
+
+**Severity.** Tier-fit observations are P0 if they fire — a section that systematically under-discriminates or systematically misrepresents difficulty corrupts every score the assessment produces. The PM should triage these before any per-row edit.
+
 ## Per-Question Verdict (YAML)
 
 ```yaml

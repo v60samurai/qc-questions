@@ -89,6 +89,17 @@ For each question, return:
 - conceptual_steps_note: <one line> — describe the steps the solver
   walks through. This is your audience-independent provenance.
 
+- dead_constraints: [<list of constraint names>] | null — for modular /
+  Diophantine / multi-condition items, enumerate the solution set
+  against all stated constraints, then drop each constraint and
+  re-enumerate. Any constraint whose removal doesn't change the answer
+  set is dead — emit its name. If the item is not constraint-based
+  (verbal, RC, single-step arithmetic), emit `dead_constraints: null`.
+  When dead constraints are present, REDUCE conceptual_steps by the
+  count of dead constraints BEFORE computing Angoff, and ensure the
+  alignment_prescriptions stem rewrite either tightens the constraint
+  into load-bearing or removes it.
+
 - pattern_exposure_note: <one line> — does this MQC, given the stated
   cohort and prep-exposure profile, have HIGH exposure to this exact
   pattern (drilled in standard prep, near-instant pattern-recall) or
