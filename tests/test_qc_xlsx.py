@@ -143,9 +143,75 @@ def written_workbook(tmp_path: Path) -> Path:
     return out
 
 
-def test_write_creates_three_sheets_in_order(written_workbook: Path):
+def test_write_creates_four_sheets_in_order(written_workbook: Path):
+    """v0.4.0: QC Summary sheet is now the first sheet."""
     wb = openpyxl.load_workbook(written_workbook)
-    assert wb.sheetnames == ["Sheet1", "QC Legend", "Corrected"]
+    assert wb.sheetnames == ["QC Summary", "Sheet1", "QC Legend", "Corrected"]
+
+
+def test_qc_summary_sheet_has_bank_counts(written_workbook: Path):
+    """v0.4.0: QC Summary sheet renders bank-level counts at the top."""
+    wb = openpyxl.load_workbook(written_workbook)
+    s = wb["QC Summary"]
+    text = "\n".join(
+        str(cell.value) for row in s.iter_rows() for cell in row if cell.value is not None
+    )
+    assert "Bank counts" in text
+    assert "total=9" in text
+
+
+def test_blueprint_review_fires_on_same_direction_two_band_cluster(tmp_path: Path):
+    """v0.4.0: when >20% of items in a section show same-direction 2-band gaps,
+    the blueprint_review observation must fire on the QC Summary sheet.
+
+    Synthesize a 3-row bank where all three items are marked HARD but blind-rate
+    EASY (2-band overrated). Run the writer and assert the QC Summary sheet
+    carries 'blueprint_review' and the section name.
+    """
+    # Build a tiny 3-row xlsx
+    bank = tmp_path / "blueprint_test.xlsx"
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    headers = [
+        "content", "option1", "option2", "option3", "option4",
+        "option5", "option6", "correctOption", "questionType",
+        "subject", "topics", "difficulty",
+    ]
+    ws.append(headers)
+    for i in range(3):
+        ws.append([
+            f"Q{i+1} stem text", "A", "B", "C", "D", None, None,
+            "option1", "MULTIPLE_CHOICE_QUESTION",
+            "Test Subject", "Test Topic", "HARD",
+        ])
+    wb.save(bank)
+
+    # Verdicts: all three blind-rated EASY against marked HARD (2-band over)
+    verdicts = tmp_path / "v.json"
+    verdicts.write_text(json.dumps([
+        {"row": r, "status": "NEEDS_EDITS", "correctness_issue": None,
+         "difficulty_issue": f"row {r} blind EASY vs marked HARD",
+         "edits": [], "confidence": "LOW",
+         "my_blind_difficulty": "EASY"}
+        for r in (2, 3, 4)
+    ]))
+
+    out = tmp_path / "out.xlsx"
+    proc = subprocess.run(
+        [sys.executable, str(SCRIPT), "write", str(bank), str(verdicts), str(out)],
+        check=True, capture_output=True, text=True,
+    )
+    assert "QC Summary" in proc.stderr
+
+    wb_out = openpyxl.load_workbook(out)
+    assert "QC Summary" in wb_out.sheetnames
+    s = wb_out["QC Summary"]
+    text = "\n".join(
+        str(cell.value) for row in s.iter_rows() for cell in row if cell.value is not None
+    )
+    assert "blueprint_review" in text, "blueprint_review observation did not fire on a 100% same-direction 2-band cluster"
+    assert "Test Subject / Test Topic" in text, "section name missing from blueprint_review observation"
+    assert "OVERRATED" in text or "overrated" in text, "direction missing from blueprint_review observation"
 
 
 def test_qc_status_lands_at_next_truly_empty_column(written_workbook: Path):

@@ -6,6 +6,27 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-05-18
+
+### Added — load-bearing render of v0.3.1's tier-fit observations
+
+v0.3.1 documented the blueprint_review trigger, the formula-recall anti-pattern, and the tier-fit observations format, but the writer didn't render any of them into the output workbook. PMs opening Test__qc.xlsx after a v0.3.1 run saw per-row qc_status + qc_changes columns and inferred "skill barely did anything" — even when 100% of a section was 2-band-overrated for the stated MQC. The doc patches were decorative until v0.4.0.
+
+This release makes the patches load-bearing:
+
+- **New `QC Summary` sheet at workbook index 0.** `scripts/qc_xlsx.py write` now computes aggregate observations and renders them at the top of every output workbook, BEFORE the per-row Original/Corrected sheets. Bank-level counts (total / ALIGNED / NEEDS_EDITS / LOW-confidence) sit at the top, followed by tier-fit observations in P0 order, followed by a per-section breakdown table with % below-floor / % 2-band-over / % formula-recall-HARD-tagged columns.
+- **Aggregate computation logic** in `_compute_aggregate_observations()`. Groups verdicts by (subject, topics) section using the input xlsx's header columns. For each section, computes percentages against the v0.3.1 thresholds (>40% below floor, >20% same-direction 2-band gap, >50% formula-recall in HARD-tagged items, >10% construct mismatch) and emits observations for whichever fire.
+- **New optional `verdicts.json` fields**: `my_blind_difficulty` (EASY|MEDIUM|HARD), `mistag_reason` (e.g. "formula_recall_overrated"), `construct_mismatch` (bool). When absent, aggregate observations skip silently — no false fires. When present, the QC Summary sheet renders the full v0.3.1 observation set.
+- **Regression test** `test_blueprint_review_fires_on_same_direction_two_band_cluster` synthesises a 3-row bank where all items are blind-EASY against marked-HARD, runs the writer, and asserts the QC Summary sheet contains "blueprint_review" + section name + direction. This is the test that would have caught the v0.3.1 gap.
+- **Regression test** `test_qc_summary_sheet_has_bank_counts` asserts the QC Summary sheet renders bank-level counts.
+
+### Changed
+- `test_write_creates_three_sheets_in_order` → `test_write_creates_four_sheets_in_order` — sheet order is now `[QC Summary, <original>, QC Legend, Corrected]`. Existing downstream consumers that index sheets by position (rather than by name) will need to shift by 1; consumers indexing by name are unaffected.
+
+### Migration notes
+- `verdicts.json` produced for v0.3.x runs is forward-compatible — the new fields are optional. Re-running the v0.4.0 writer on a v0.3.x verdicts.json produces a workbook with the QC Summary sheet showing only bank-level counts (no aggregate observations, since `my_blind_difficulty` and `mistag_reason` are absent).
+- Subagents dispatched under v0.4.0 should emit `my_blind_difficulty` and `mistag_reason` per row so the aggregate sheet has the inputs it needs. SUBAGENT_PROMPT.md already requires `my_blind_difficulty` since v0.3.0; `mistag_reason` is new in v0.4.0 and is required only when a HARD-tagged item collapses to formula-recall.
+
 ## [0.3.1] - 2026-05-18
 
 ### Added — four structural patches from a tier-1 bank QC postmortem

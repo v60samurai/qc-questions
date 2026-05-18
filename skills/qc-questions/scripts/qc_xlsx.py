@@ -80,6 +80,21 @@ ORIGINAL_QC_COLUMN = "qc_status"           # Status column appended to the origi
 ORIGINAL_QC_CHANGES_COLUMN = "qc_changes"  # Narrative audit column appended next to qc_status
 CORRECTED_SHEET_NAME = "Corrected"         # New sheet containing post-edit rows
 LEGEND_SHEET_NAME = "QC Legend"            # Small sheet documenting the color code
+SUMMARY_SHEET_NAME = "QC Summary"          # Top-of-workbook tier-fit + blueprint-review observations (v0.4.0)
+
+# Thresholds for the aggregate tier-fit observations rendered into the
+# QC Summary sheet. Sourced from SKILL.md Rule 4-bis (blueprint-review)
+# and REPORT_TEMPLATE.md Tier-Fit Observations. Each fires per (subject,
+# topics) section, not bank-wide — a section-level miscalibration is the
+# load-bearing signal a PM needs to see first.
+OBSERVATION_THRESHOLDS = {
+    "below_floor_pct":           40,   # > 40% items with blind < marked → over-tagged for the stated MQC
+    "two_band_same_direction":   20,   # > 20% items 2-band gap in same direction → blueprint_review
+    "formula_recall_pct":        50,   # > 50% HARD-tagged items with formula_recall_overrated → anti-pattern
+    "construct_mismatch_pct":    10,   # > 10% items flagged as construct_mismatch
+}
+
+BAND_ORDER = ["EASY", "MEDIUM", "HARD"]
 
 # Audit columns appended to the original sheet — excluded from the Corrected sheet.
 ORIGINAL_AUDIT_COLUMNS = {ORIGINAL_QC_COLUMN, ORIGINAL_QC_CHANGES_COLUMN}
@@ -366,6 +381,229 @@ def cmd_read(args):
     sys.stdout.write("\n")
 
 
+def _band_gap(blind: str, marked: str):
+    """Signed band gap: blind - marked. Negative = item easier than tagged for the stated MQC.
+    Returns None if either input isn't a valid band."""
+    if blind not in BAND_ORDER or marked not in BAND_ORDER:
+        return None
+    return BAND_ORDER.index(blind) - BAND_ORDER.index(marked)
+
+
+def _compute_aggregate_observations(verdicts_list, ws, headers):
+    """Group verdicts by (subject, topics) section and compute which tier-fit
+    observations fire per section. Returns a dict with bank-level counts and
+    a list of per-section observations sorted P0-first.
+
+    Reads marked subject/topics/difficulty from the input sheet ws using the
+    headers map. The verdict optionally carries `my_blind_difficulty` and
+    `mistag_reason` (added in v0.4.0); when absent, the corresponding
+    observations skip silently (no false fires).
+    """
+    try:
+        sub_idx = headers.index("subject") + 1
+        top_idx = headers.index("topics") + 1
+        diff_idx = headers.index("difficulty") + 1
+    except ValueError:
+        return {"bank": {}, "sections": [], "observations": []}
+
+    by_row = {v["row"]: v for v in verdicts_list}
+    rows = []
+    for excel_row in range(2, ws.max_row + 1):
+        sub = ws.cell(row=excel_row, column=sub_idx).value
+        top = ws.cell(row=excel_row, column=top_idx).value
+        marked = ws.cell(row=excel_row, column=diff_idx).value
+        if sub is None and top is None:
+            continue
+        v = by_row.get(excel_row, {})
+        rows.append({
+            "row": excel_row,
+            "subject": sub,
+            "topics": top,
+            "marked": marked,
+            "blind": v.get("my_blind_difficulty"),
+            "status": v.get("status"),
+            "confidence": v.get("confidence"),
+            "mistag_reason": v.get("mistag_reason"),
+            "correctness_issue": v.get("correctness_issue"),
+            "difficulty_issue": v.get("difficulty_issue"),
+            "construct_mismatch": bool(v.get("construct_mismatch")),
+        })
+
+    bank = {
+        "total": len(rows),
+        "aligned": sum(1 for r in rows if r["status"] == "ALIGNED"),
+        "needs_edits": sum(1 for r in rows if r["status"] == "NEEDS_EDITS"),
+        "low_confidence": sum(1 for r in rows if r["confidence"] == "LOW"),
+    }
+
+    # Group by section
+    sections_map = {}
+    for r in rows:
+        key = (r["subject"] or "", r["topics"] or "")
+        sections_map.setdefault(key, []).append(r)
+
+    observations = []
+    sections_summary = []
+    for (sub, top), items in sections_map.items():
+        n = len(items)
+        # Below-floor: items with blind < marked (overrated for stated MQC), excluding rows without blind
+        below_floor = [r for r in items if _band_gap(r["blind"], r["marked"]) is not None and _band_gap(r["blind"], r["marked"]) < 0]
+        # Two-band same-direction
+        two_band_over = [r for r in items if _band_gap(r["blind"], r["marked"]) == -2]
+        two_band_under = [r for r in items if _band_gap(r["blind"], r["marked"]) == 2]
+        # Formula-recall anti-pattern on HARD-tagged items
+        hard_tagged = [r for r in items if r["marked"] == "HARD"]
+        formula_recall = [r for r in hard_tagged if r["mistag_reason"] == "formula_recall_overrated"
+                         or (r["difficulty_issue"] and "formula_recall_overrated" in r["difficulty_issue"])]
+        # Construct mismatch
+        construct = [r for r in items if r["construct_mismatch"]
+                    or (r["correctness_issue"] and "construct mismatch" in r["correctness_issue"].lower())]
+
+        pct_below = 100 * len(below_floor) / n if n else 0
+        pct_2band_over = 100 * len(two_band_over) / n if n else 0
+        pct_2band_under = 100 * len(two_band_under) / n if n else 0
+        pct_formula = 100 * len(formula_recall) / len(hard_tagged) if hard_tagged else 0
+        pct_construct = 100 * len(construct) / n if n else 0
+
+        section_label = f"{sub} / {top}".strip(" /")
+        sections_summary.append({
+            "section": section_label, "n": n,
+            "pct_below": pct_below, "pct_2band_over": pct_2band_over,
+            "pct_2band_under": pct_2band_under, "pct_formula": pct_formula,
+            "pct_construct": pct_construct,
+            "rows_below": [r["row"] for r in below_floor],
+            "rows_2band_over": [r["row"] for r in two_band_over],
+            "rows_formula": [r["row"] for r in formula_recall],
+        })
+
+        # Emit observations (P0-ordered: blueprint_review first, then formula-recall, then below-floor, then construct)
+        if pct_2band_over > OBSERVATION_THRESHOLDS["two_band_same_direction"]:
+            observations.append({
+                "severity": "P0", "kind": "blueprint_review", "section": section_label,
+                "headline": f"Blueprint review — {section_label}: {len(two_band_over)}/{n} items "
+                           f"({pct_2band_over:.0f}%) are 2-band-gapped OVERRATED for the stated MQC.",
+                "detail": f"Same-direction 2-band gaps cluster in this section above the {OBSERVATION_THRESHOLDS['two_band_same_direction']}% threshold. "
+                          f"This is a tag-calibration problem at the section level, not per-item drift. Affected rows: {sorted(set(r['row'] for r in two_band_over))}. "
+                          f"Recommend a blueprint pass: either re-author the affected items to actually function at their marked bands, "
+                          f"or relax the marked tags to match item behaviour for the audience.",
+                "rows": sorted(set(r["row"] for r in two_band_over)),
+            })
+        if pct_2band_under > OBSERVATION_THRESHOLDS["two_band_same_direction"]:
+            observations.append({
+                "severity": "P0", "kind": "blueprint_review", "section": section_label,
+                "headline": f"Blueprint review — {section_label}: {len(two_band_under)}/{n} items "
+                           f"({pct_2band_under:.0f}%) are 2-band-gapped UNDERRATED for the stated MQC.",
+                "detail": f"Items rated harder than tagged. Either author overestimates difficulty calibration or items are mistagged as EASY/MEDIUM. Affected rows: {sorted(set(r['row'] for r in two_band_under))}.",
+                "rows": sorted(set(r["row"] for r in two_band_under)),
+            })
+        if pct_formula > OBSERVATION_THRESHOLDS["formula_recall_pct"]:
+            observations.append({
+                "severity": "P0", "kind": "formula_recall_anti_pattern", "section": section_label,
+                "headline": f"Anti-pattern — {section_label}: {len(formula_recall)}/{len(hard_tagged)} HARD-tagged items "
+                           f"({pct_formula:.0f}%) reduce to formula-recall + plug-in.",
+                "detail": f"Formula recall is not HARD-band behaviour. Recommend re-authoring with multi-concept chaining, non-obvious decomposition, or interacting constraints. "
+                          f"Affected rows: {sorted(set(r['row'] for r in formula_recall))}.",
+                "rows": sorted(set(r["row"] for r in formula_recall)),
+            })
+        if pct_below > OBSERVATION_THRESHOLDS["below_floor_pct"]:
+            observations.append({
+                "severity": "P0", "kind": "section_below_floor", "section": section_label,
+                "headline": f"Section composition — {section_label}: {len(below_floor)}/{n} items "
+                           f"({pct_below:.0f}%) blind-rate easier than tagged for the stated MQC.",
+                "detail": f"Section under-discriminates at the cut score. Information function is suboptimal. "
+                          f"Recommend replacing {len(below_floor)} items with stems that function at their marked bands. Affected rows: {sorted(set(r['row'] for r in below_floor))}.",
+                "rows": sorted(set(r["row"] for r in below_floor)),
+            })
+        if pct_construct > OBSERVATION_THRESHOLDS["construct_mismatch_pct"]:
+            observations.append({
+                "severity": "P0", "kind": "construct_drift", "section": section_label,
+                "headline": f"Construct drift — {section_label}: {len(construct)}/{n} items "
+                           f"({pct_construct:.0f}%) appear to test a different construct than tagged.",
+                "detail": f"Recommend a tagging-taxonomy review before shipping. Affected rows: {sorted(set(r['row'] for r in construct))}.",
+                "rows": sorted(set(r["row"] for r in construct)),
+            })
+
+    return {"bank": bank, "sections": sections_summary, "observations": observations}
+
+
+def _write_summary_sheet(wb, aggregate):
+    """Render the v0.4.0 QC Summary sheet at workbook index 0.
+
+    Layout:
+      Row 1: Title
+      Row 2-3: Bank counts
+      Rows 5+: Tier-fit observations (P0-first), one block per observation
+      Below: Per-section breakdown table
+    """
+    if SUMMARY_SHEET_NAME in wb.sheetnames:
+        del wb[SUMMARY_SHEET_NAME]
+    s = wb.create_sheet(SUMMARY_SHEET_NAME, index=0)
+    s.column_dimensions["A"].width = 22
+    s.column_dimensions["B"].width = 100
+
+    s["A1"] = "QC Summary — qc-questions v0.4.0"
+    s["A1"].font = Font(bold=True, size=14)
+
+    bank = aggregate["bank"]
+    s["A3"] = "Bank counts:"
+    s["A3"].font = BOLD_FONT
+    s["B3"] = (
+        f"total={bank.get('total', 0)}  |  ALIGNED={bank.get('aligned', 0)}  |  "
+        f"NEEDS_EDITS={bank.get('needs_edits', 0)}  |  LOW-confidence={bank.get('low_confidence', 0)}"
+    )
+
+    row = 5
+    observations = aggregate.get("observations", [])
+    if observations:
+        s.cell(row=row, column=1, value="Tier-fit observations (P0 — read these first):").font = Font(bold=True, size=12)
+        row += 2
+        for obs in observations:
+            head_cell = s.cell(row=row, column=1, value=f"[{obs['severity']} {obs['kind']}]")
+            head_cell.font = BOLD_FONT
+            head_cell.fill = RED_FILL
+            s.cell(row=row, column=2, value=obs["headline"]).font = BOLD_FONT
+            s.cell(row=row, column=2).alignment = Alignment(wrap_text=True, vertical="top")
+            row += 1
+            detail_cell = s.cell(row=row, column=2, value=obs["detail"])
+            detail_cell.alignment = Alignment(wrap_text=True, vertical="top")
+            s.row_dimensions[row].height = 60
+            row += 2
+    else:
+        s.cell(row=row, column=1, value="Tier-fit observations:").font = BOLD_FONT
+        s.cell(row=row, column=2, value="None fired. Bank-level calibration looks reasonable; review per-row verdicts.").font = Font(italic=True)
+        row += 2
+
+    # Per-section breakdown
+    row += 1
+    s.cell(row=row, column=1, value="Per-section breakdown:").font = Font(bold=True, size=12)
+    row += 1
+    headers_row = ["Section", "n", "% below floor", "% 2-band over", "% formula-recall (HARD-tagged)", "Rows below floor"]
+    for col, h in enumerate(headers_row, start=1):
+        c = s.cell(row=row, column=col, value=h)
+        c.font = BOLD_FONT
+    row += 1
+    for sec in aggregate.get("sections", []):
+        s.cell(row=row, column=1, value=sec["section"])
+        s.cell(row=row, column=2, value=sec["n"])
+        s.cell(row=row, column=3, value=f"{sec['pct_below']:.0f}%")
+        s.cell(row=row, column=4, value=f"{sec['pct_2band_over']:.0f}%")
+        s.cell(row=row, column=5, value=f"{sec['pct_formula']:.0f}%")
+        s.cell(row=row, column=6, value=", ".join(str(r) for r in sec["rows_below"]) or "—")
+        row += 1
+
+    # Footnote
+    row += 2
+    s.cell(row=row, column=1, value="Thresholds:").font = BOLD_FONT
+    s.cell(row=row, column=2, value=(
+        f"blueprint_review fires > {OBSERVATION_THRESHOLDS['two_band_same_direction']}% same-direction 2-band gaps in section. "
+        f"section_below_floor fires > {OBSERVATION_THRESHOLDS['below_floor_pct']}%. "
+        f"formula_recall_anti_pattern fires > {OBSERVATION_THRESHOLDS['formula_recall_pct']}% of HARD-tagged items in section. "
+        f"construct_drift fires > {OBSERVATION_THRESHOLDS['construct_mismatch_pct']}%."
+    ))
+    s.cell(row=row, column=2).alignment = Alignment(wrap_text=True, vertical="top")
+    s.row_dimensions[row].height = 60
+
+
 def cmd_write(args):
     in_path = Path(args.input).expanduser().resolve()
     verdicts_path = Path(args.verdicts).expanduser().resolve()
@@ -538,10 +776,18 @@ def cmd_write(args):
     # ---- 4. LEGEND sheet documenting the colour code.
     _write_legend_sheet(wb)
 
-    # Reorder so the user opens to: Original → QC Legend → Corrected.
-    sheet_order = []
+    # ---- 4. QC SUMMARY sheet (v0.4.0): compute aggregate observations and
+    # render them at workbook index 0 so PMs see calibration issues BEFORE
+    # the per-row verdicts. The aggregate logic uses optional verdict fields
+    # (my_blind_difficulty, mistag_reason, construct_mismatch); when absent,
+    # the sheet renders bank-level counts only — no false fires.
+    aggregate = _compute_aggregate_observations(verdicts_list, ws, headers)
+    _write_summary_sheet(wb, aggregate)
+
+    # Reorder: QC Summary first, then Original → QC Legend → Corrected.
+    sheet_order = [SUMMARY_SHEET_NAME]
     for name in wb.sheetnames:
-        if name not in (LEGEND_SHEET_NAME, CORRECTED_SHEET_NAME):
+        if name not in (SUMMARY_SHEET_NAME, LEGEND_SHEET_NAME, CORRECTED_SHEET_NAME):
             sheet_order.append(name)
     sheet_order.append(LEGEND_SHEET_NAME)
     sheet_order.append(CORRECTED_SHEET_NAME)
@@ -551,6 +797,8 @@ def cmd_write(args):
     wb.save(out_path)
     sys.stderr.write(
         f"Wrote {out_path}\n"
+        f"  - '{SUMMARY_SHEET_NAME}' sheet: bank counts + tier-fit observations "
+        f"({len(aggregate['observations'])} fired) — read this FIRST\n"
         f"  - Original '{ws.title}': qc_status at column {qc_status_col}, "
         f"qc_changes at column {qc_changes_col}\n"
         f"  - '{LEGEND_SHEET_NAME}' sheet: colour-code legend\n"
